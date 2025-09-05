@@ -1,5 +1,5 @@
-"""Responder 模組 (Stage 1)
-根據 planner 的硬編計畫，產生簡單 PCT 同理回覆。
+"""Responder 模組 (Stage 2)
+根據 planner (LLM 或 fallback) 的計畫，產生簡單 PCT 同理回覆。
 """
 from __future__ import annotations
 

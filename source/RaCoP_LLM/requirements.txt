@@ -1,1 +1,4 @@
-# no deps yet
+openai>=1.0.0
+python-dotenv>=1.0.0
+jsonschema>=4.19.0
+google-generativeai>=0.7.0

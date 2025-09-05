@@ -1,13 +1,17 @@
-# RaCoP 心理支持聊天機器人 (Stage 1)
+# RaCoP 心理支持聊天機器人 (Stage 2)
 
-本階段：建立最小「兩段式管線」(Planner -> Responder)；Planner 回傳硬編 PCT 規劃，Responder 依規劃輸出 2–3 句英文同理回覆。
+本階段：Planner 由硬編升級為「LLM + JSON Schema 驗證 + Fallback」。若 LLM 輸出失敗或金鑰缺失，則自動退回 PCT-only 假資料計畫，再由 Responder 生成 2–3 句英文同理回覆。
 
-## 目標摘要
+## 功能摘要
 
-1. CLI 單輪：讀取一行使用者輸入
-2. Planner: `fake_plan(user_msg)` 回傳固定計畫 (忽略輸入內容)
-3. Responder: `respond(plan, user_msg)` 根據計畫組合同理 + 驗證 + 開放式問題
-4. 僅使用標準函式庫，無任何外部依賴
+1. CLI 單輪互動：讀一行輸入 → 產生計畫 → 生成回覆
+2. Planner (`generate_plan`):
+   - 讀取 `core/prompts/system_cop.txt` 作為 system prompt
+   - 呼叫 OpenAI (模型: gpt-4o-mini, temperature=0.2)
+   - 嚴格要求僅輸出 JSON；用 `core/schemas/cop_plan.schema.json` 驗證
+   - 失敗重試最多 2 次；仍失敗 → `fake_plan` fallback
+3. Responder (`respond`): 使用 PCT 槽位 (starter / validation / question) 組合回覆，缺失即填預設
+4. `.env` 讀取 `OPENAI_API_KEY`（可缺：會 fallback）
 
 ## 專案結構
 
@@ -18,58 +22,91 @@ RACoP/source/RaCoP_LLM/
 ├─ cli/
 │  └─ main.py
 └─ core/
-	└─ pipeline/
-		├─ planner.py
-		└─ responder.py
+	├─ pipeline/
+	│  ├─ planner.py
+	│  └─ responder.py
+	├─ providers/
+	│  └─ openai_client.py
+	├─ prompts/
+	│  └─ system_cop.txt
+	└─ schemas/
+		└─ cop_plan.schema.json
 ```
 
-## 環境需求
+## 需求與安裝
 
 - Python 3.11+
-
-## 安裝 (無第三方套件)
+- 套件：OpenAI SDK、python-dotenv、jsonschema
 
 ```
 python -m venv .venv
-.venv\Scripts\activate  # Windows PowerShell
+.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-`requirements.txt`：
+`requirements.txt` 內容：
 
 ```
-# no deps yet
+openai>=1.0.0
+python-dotenv>=1.0.0
+jsonschema>=4.19.0
 ```
+
+## 設定 API Key (.env)
+
+在專案根目錄建立 `.env`：
+
+```
+OPENAI_API_KEY=sk-xxxx...
+```
+
+未設定或金鑰失效時，Planner 會直接使用 `fake_plan`。
 
 ## 執行
 
-在 `RACoP/source/RaCoP_LLM/` 目錄下：
+於 `RACoP/source/RaCoP_LLM/`：
 
 ```
 python cli/main.py
 ```
 
-輸入一句文字，例如：
+範例（有金鑰且成功）：
 
 ```
-You: I have been feeling nervous about tomorrow's presentation and can't sleep.
-Assistant: I sense the deep emotions you're experiencing about "I have been feeling nervous about tomorrow's presentatio…". Your feelings are completely valid and worth exploring. What do you need most in this moment?
+You: I feel stuck and overthinking everything about my future.
+Assistant: I sense the deep emotions you're experiencing about "I feel stuck and overthinking everything about my futu…". Your feelings are completely valid and worth exploring. What do you need most in this moment?
 ```
 
-（實際輸出會依輸入長度在第一句中截斷顯示部份內容。）
+若 LLM 失敗或無金鑰，仍會得到 PCT fallback：
 
-## 模組說明
+```
+You: I feel overwhelmed.
+Assistant: I sense the deep emotions you're experiencing about "I feel overwhelmed.". Your feelings are completely valid and worth exploring. What do you need most in this moment?
+```
 
-- `core/pipeline/planner.py`: `fake_plan` 回傳硬編 PCT-only 規劃 JSON (dict)
-- `core/pipeline/responder.py`: `respond` 取計畫槽位 + 使用者輸入 snippet 組合 2–3 句英文
+## 關鍵模組
 
-## 後續可能階段 (預告)
+- `core/pipeline/planner.py`
+  - `generate_plan`: 呼叫 LLM + schema 驗證 + 重試 + fallback
+  - `fake_plan`: 固定 PCT-only 計畫
+- `core/providers/openai_client.py`: 輕量 OpenAI 包裝，失敗回空字串
+- `core/pipeline/responder.py`: 取計畫 `template_slots.pct` 字段組合回覆
 
-- 風險訊號抽取 / 情緒分類（假資料 → 模型）
-- 記憶管理與多輪對話
-- LLM 提示詞動態生成 (final_prompt)
-- 多療法 (CBT, ACT, REBT...) 權重融合
+## Fallback 策略
+
+任何以下情況觸發 fallback：
+
+- 缺 `OPENAI_API_KEY`
+- OpenAI SDK 初始化失敗
+- 回傳非 JSON 或 schema 驗證失敗 (重試 >= 2 次後)
+
+## 後續規劃 (展望)
+
+- 風險/情緒抽取升級為模型鏈結
+- 多療法權重動態調整與融合策略
+- 對話記憶 (短期/長期) 與上下文維護
+- 最終提示合成 (final_prompt) 與多輪生成
 
 ---
 
-本檔案會在後續階段持續更新。
+本階段完成：LLM Planner + Schema 驗證 + Responder + Fallback。下一階段可擴展多療法槽位與上下文管理。

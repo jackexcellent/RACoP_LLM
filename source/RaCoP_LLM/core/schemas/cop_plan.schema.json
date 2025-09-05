@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["risk", "emotions", "plan", "tone"],
+  "properties": {
+    "risk": {
+      "type": "object",
+      "required": ["level"],
+      "properties": {
+        "level": { "enum": ["low", "med", "high"] },
+        "signals": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "emotions": { "type": "array", "items": { "type": "string" } },
+    "distortions": { "type": "array", "items": { "type": "string" } },
+    "plan": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["therapy", "weight"],
+        "properties": {
+          "therapy": { "enum": ["PCT", "CBT", "SFBT", "DBT"] },
+          "goal": { "type": "string" },
+          "weight": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "tone": { "type": "string" },
+    "reading_level": { "type": "string" },
+    "template_slots": { "type": "object" },
+    "retrieval_queries": { "type": "array", "items": { "type": "string" } },
+    "final_prompt": { "type": "string" },
+    "notes": { "type": "string" }
+  }
+}

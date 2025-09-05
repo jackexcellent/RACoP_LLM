@@ -1,0 +1,47 @@
+# --- RaCoP Python Project .gitignore ---
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.build/
+build/
+dist/
+.eggs/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Jupyter / IPython
+.ipynb_checkpoints/
+
+# Logs / caches
+*.log
+*.tmp
+*.cache/
+.cache/
+pytest_cache/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Model / large artifacts (adjust later if needed)
+*.safetensors
+*.bin
+
+# Environment files (keep a template tracked instead of real secrets)
+.env.local
+.env.*.backup
+
+# NOTE: We intentionally DO NOT ignore `.env` so that a safe placeholder version
+# can be committed for onboarding. Remove it here if you prefer secrecy instead.
