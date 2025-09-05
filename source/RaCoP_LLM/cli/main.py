@@ -1,11 +1,31 @@
-"""RaCoP 心理支持聊天機器人 - 初始化階段
-目前僅示範最小 CLI 架構。
-執行：python cli/main.py
+"""RaCoP 心理支持聊天機器人 - Stage 1
+流程：User Input -> Planner(fake) -> Responder
+執行方式：python cli/main.py
+
+注意：為了可直接以路徑執行 (而非 -m 套件方式)，此檔案在匯入前動態加入父層路徑。
 """
 
-def main():
-    msg = input("You: ")  # 讀取使用者輸入 (目前不使用)
-    print("Assistant: 我在喔（初始化完成）")
+from __future__ import annotations
 
-if __name__ == "__main__":
+import os
+import sys
+
+# 將專案根目錄 (含 core/) 加入 sys.path，允許 "from core..." 匯入
+_CURRENT_DIR = os.path.dirname(__file__)
+_PROJECT_ROOT = os.path.dirname(_CURRENT_DIR)
+if _PROJECT_ROOT not in sys.path:  # 避免重複插入
+    sys.path.insert(0, _PROJECT_ROOT)
+
+from core.pipeline.planner import fake_plan  # type: ignore
+from core.pipeline.responder import respond  # type: ignore
+
+
+def main() -> None:
+    user_msg = input("You: ")
+    plan = fake_plan(user_msg)
+    reply = respond(plan, user_msg)
+    print("Assistant: " + reply)
+
+
+if __name__ == "__main__":  # pragma: no cover
     main()
