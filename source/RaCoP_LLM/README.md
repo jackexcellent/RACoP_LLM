@@ -1,6 +1,6 @@
-# RaCoP 心理支持聊天機器人 (Stage 3)
+# RaCoP 心理支持聊天機器人 (Stage 4)
 
-本階段：在 Stage 2 的 LLM Planner 基礎上，加入 LLM Responder（Gemini）與模板化回覆。若 Gemini 失敗或缺金鑰則退回規則式（PCT 三句）組裝。
+本階段：延伸 Stage 3，加入 Safety Gate v1。流程：使用者輸入 → Planner (LLM + schema + fallback) → Safety 檢查高風險 → 若高風險回覆升級訊息，否則 Responder (Gemini + 模板 or fallback)。
 
 ## 功能摘要
 
@@ -10,8 +10,9 @@
    - 呼叫 OpenAI (模型: gpt-4o-mini, temperature=0.2)
    - 嚴格要求僅輸出 JSON；用 `core/schemas/cop_plan.schema.json` 驗證
    - 失敗重試最多 2 次；仍失敗 → `fake_plan` fallback
-3. Responder (`generate_response`): 使用 Gemini (gemini-2.0-flash, temp=0.7) + system prompt + PCT 模板生成 2–5 句英文；失敗則規則式 fallback（2–3 句）
-4. `.env` 讀取 `OPENAI_API_KEY` (Planner) 與 `GOOGLE_API_KEY` (Responder)；任一缺失即對應模組 fallback
+3. Safety (`safety.assess`): 計畫 risk=high 或輸入包含高風險關鍵詞 → 直接輸出升級訊息
+4. Responder (`generate_response`): 使用 Gemini (gemini-2.0-flash, temp=0.7) + system prompt + PCT 模板生成 2–5 句英文；失敗則規則式 fallback（2–3 句）
+5. `.env` 讀取 `OPENAI_API_KEY` (Planner) 與 `GOOGLE_API_KEY` (Responder)；任一缺失即對應模組 fallback
 
 ## 專案結構
 
@@ -24,7 +25,9 @@ RACoP/source/RaCoP_LLM/
 └─ core/
 	├─ pipeline/
 	│  ├─ planner.py
-	│  └─ responder.py
+	│  ├─ responder.py
+	│  ├─ coordinator.py
+	│  └─ safety.py
 	├─ providers/
 	│  ├─ openai_client.py
 	│  └─ gemini_client.py
@@ -100,13 +103,29 @@ Assistant: I’m here with you as you share this about "I feel overwhelmed.". It
 - `core/providers/gemini_client.py`: LLM-B (Responder) 呼叫
 - `core/pipeline/responder.py`: `generate_response` 讀模板並呼叫 Gemini；失敗改用規則式 fallback
 
+## Safety Gate v1
+
+觸發高風險的條件：
+
+- Planner 產生的 `plan.risk.level == "high"`
+- 或使用者輸入文字包含下列任一關鍵詞（中英）例如："自殺", "想死", "kill myself", "end my life", "self-harm", "overdose"。
+
+高風險處理：
+
+- 不呼叫 Responder；直接回覆升級訊息 (英文 3–6 句)
+- 內容包含：情緒承接、安全重視、鼓勵聯絡緊急服務或可信任他人、說明此系統不替代專業急救
+- 不提供具體自傷方式或聯絡電話（此版本維持泛化）
+
+限制：v1 僅區分 high / low，未提供中度層級 (med)。未來可拓展多層級與地區化資源連結。
+
 ## Fallback 策略
 
 任何以下情況觸發 fallback：
 
-- 缺 `OPENAI_API_KEY` → Planner fallback
-- Planner LLM 回傳非 JSON 或 schema 驗證失敗 (重試 >= 2 次) → Planner fallback
-- 缺 `GOOGLE_API_KEY` 或 Gemini 失敗 → Responder 規則式 fallback
+1. 缺 `OPENAI_API_KEY` → Planner fallback
+2. Planner LLM 回傳非 JSON 或 schema 驗證失敗 (重試 >= 2 次) → Planner fallback
+3. 缺 `GOOGLE_API_KEY` 或 Gemini 失敗 → Responder 規則式 fallback
+4. 任一步驟未預期例外 → 統一回覆安全的簡短道歉訊息
 
 ## 後續規劃 (展望)
 
@@ -117,4 +136,4 @@ Assistant: I’m here with you as you share this about "I feel overwhelmed.". It
 
 ---
 
-本階段完成：LLM Planner + Schema 驗證 + LLM Responder + 模板化 + Fallback。下一階段可擴展多輪記憶與多療法權重細化。
+本階段完成：LLM Planner + Schema 驗證 + Safety Gate v1 + LLM Responder + 模板化 + 多層 fallback。下一階段可擴展多輪記憶與多療法權重細化。

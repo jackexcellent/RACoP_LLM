@@ -1,5 +1,5 @@
-"""RaCoP 心理支持聊天機器人 - Stage 3
-流程：User Input -> Planner(LLM w/ schema + fallback) -> Responder(LLM Gemini 或 fallback)
+"""RaCoP 心理支持聊天機器人 - Stage 4
+流程：User Input -> Coordinator (Planner -> Safety Gate -> Responder)
 執行方式：python cli/main.py
 
 注意：為了可直接以路徑執行 (而非 -m 套件方式)，此檔案在匯入前動態加入父層路徑。
@@ -16,14 +16,12 @@ _PROJECT_ROOT = os.path.dirname(_CURRENT_DIR)
 if _PROJECT_ROOT not in sys.path:  # 避免重複插入
     sys.path.insert(0, _PROJECT_ROOT)
 
-from core.pipeline.planner import generate_plan  # type: ignore
-from core.pipeline.responder import generate_response  # type: ignore
+from core.pipeline.coordinator import run_once  # type: ignore
 
 
 def main() -> None:
     user_msg = input("You: ")
-    plan = generate_plan(user_msg)
-    reply = generate_response(plan, user_msg)
+    reply = run_once(user_msg)
     print("Assistant: " + reply)
 
 
