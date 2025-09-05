@@ -40,6 +40,7 @@ Thumbs.db
 *.bin
 
 # Environment files (keep a template tracked instead of real secrets)
+.env
 .env.local
 .env.*.backup
 
