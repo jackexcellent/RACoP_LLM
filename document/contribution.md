@@ -1,8 +1,4 @@
-# Contributing to the project
-
-There is a list of pending issues in the [Issues tab](https://bitbucket.org/vipresearch/gaiola-stage-3/issues?status=new&status=open&status=submitted&is_spam=!spam) on BitBucket. It would be best to clear up these issues before working on new features.
-
-## Commits and commit messages
+# Commits and commit messages
 
 - Each commit should be a single logical change. Don't make several logical changes in one commit. For example, if a patch fixes a bug and optimizes the performance of a feature, split it into two separate commits.
 

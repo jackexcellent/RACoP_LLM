@@ -96,23 +96,80 @@ def _strip_code_fence(s: str) -> str:
                 return inner.strip()
     return s
 
+def _coerce_for_schema(data: Dict[str, Any]) -> Dict[str, Any]:
+    # risk.signals: allow string -> [string]
+    try:
+        if isinstance(data.get("risk"), dict):
+            sig = data["risk"].get("signals")
+            if isinstance(sig, str):
+                cleaned = [s.strip() for s in sig.split(",") if s.strip()] or [sig.strip()]
+                data["risk"]["signals"] = cleaned
+    except Exception:  # pragma: no cover
+        pass
+
+    # plan: allow list of strings -> objects; ensure each has therapy
+    plan = data.get("plan")
+    if isinstance(plan, list):
+        new_plan = []
+        for item in plan:
+            if isinstance(item, str):
+                new_plan.append({"therapy": item, "weight": 1.0 / max(len(plan), 1)})
+            elif isinstance(item, dict) and "therapy" in item:
+                if "weight" not in item:
+                    item["weight"] = 0.5
+                new_plan.append(item)
+        if new_plan:
+            data["plan"] = new_plan
+
+    # emotions: if object convert to array of distinct emotion terms (primary, secondary)
+    emos = data.get("emotions")
+    if isinstance(emos, dict):
+        arr = []
+        for key in ("primary", "secondary"):
+            v = emos.get(key)
+            if isinstance(v, str) and v.strip():
+                for part in v.split(","):
+                    p = part.strip()
+                    if p and p not in arr:
+                        arr.append(p)
+        if arr:
+            data["emotions"] = arr
+
+    # template_slots: merge loose pct/cbt/sfbt/dbt objects into template_slots
+    ts = data.get("template_slots")
+    if not isinstance(ts, dict):
+        ts = {}
+    for key in ("pct", "cbt", "sfbt", "dbt"):
+        if isinstance(data.get(key), dict):
+            ts.setdefault(key, {}).update(data[key])  # layer in
+    if ts:
+        data["template_slots"] = ts
+    return data
+
+
 def _parse_and_validate(raw: str, schema: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     candidate_str = _strip_code_fence(raw.strip())
-    for attempt in range(2):  # first raw parse, then extracted block
+    for attempt in range(3):  # raw, extracted, coerced
         try:
             data = json.loads(candidate_str)
         except json.JSONDecodeError:
             block = _extract_json_block(candidate_str)
             if block and block != candidate_str:
-                block = _strip_code_fence(block)
-                candidate_str = block
+                candidate_str = _strip_code_fence(block)
                 continue
             return None
+        # First try direct validation
         try:
             validate(instance=data, schema=schema)
             return data
         except ValidationError:
-            return None
+            # Attempt coercion then re-validate once
+            try:
+                coerced = _coerce_for_schema(data)
+                validate(instance=coerced, schema=schema)
+                return coerced
+            except ValidationError:
+                return None
     return None
 
 

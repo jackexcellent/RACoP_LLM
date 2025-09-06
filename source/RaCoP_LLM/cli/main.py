@@ -1,5 +1,5 @@
-"""RaCoP 心理支持聊天機器人 - Stage 4
-流程：User Input -> Coordinator (Planner -> Safety Gate -> Responder)
+"""RaCoP 心理支持聊天機器人 - Stage 6
+流程：User Input -> Coordinator (Memory -> Planner -> Safety/DBT Gate -> Responder/Referral + Persistence)
 執行方式：python cli/main.py
 
 注意：為了可直接以路徑執行 (而非 -m 套件方式)，此檔案在匯入前動態加入父層路徑。
@@ -20,8 +20,9 @@ from core.pipeline.coordinator import run_once  # type: ignore
 
 
 def main() -> None:
+    session_id = os.getenv("SESSION_ID", "default")
     user_msg = input("You: ")
-    reply = run_once(user_msg)
+    reply = run_once(user_msg, session_id=session_id)
     print("Assistant: " + reply)
 
 

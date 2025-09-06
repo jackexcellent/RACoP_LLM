@@ -1,5 +1,5 @@
-"""Conversation coordinator (Stage 4)
-Orchestrates Planner -> Safety Gate -> Responder.
+"""Conversation coordinator (Stage 6)
+Orchestrates: Memory -> Planner -> Safety/DBT Gate -> Responder + persistence.
 """
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Dict, Any
 from core.pipeline.planner import generate_plan  # type: ignore
 from core.pipeline import safety  # type: ignore
 from core.pipeline.responder import generate_response  # type: ignore
+from core.pipeline import memory  # type: ignore
 
 
 APOLOGY_MSG = (
@@ -15,22 +16,28 @@ APOLOGY_MSG = (
 )
 
 
-def run_once(user_msg: str) -> str:
-    """Run one full pipeline turn.
+def run_once(user_msg: str, session_id: str = "default") -> str:
+    """Run one full pipeline turn with short-term memory persistence.
 
-    Steps:
-    1. Planner generate_plan -> plan (dict)
-    2. Safety assess(plan, user_msg) -> risk
+    1. Load short context summary (last N turns) for session.
+    2. Planner generate_plan(user_msg, recent_ctx=short_ctx)
+    3. Safety assess(plan, user_msg)
        - If high -> escalation message
-    3. Responder generate_response(plan, user_msg)
-    Any exception returns a safe apology message.
+    4. Responder generate_response(plan, user_msg, short_ctx=short_ctx)
+    5. Append user + assistant turns to JSONL with plan summary meta.
     """
+    # Always attempt to store user message even if later steps fail.
+    short_ctx = ""
     try:
-        plan: Dict[str, Any]
+        short_ctx = memory.get_short_context(session_id, turns=12)
+    except Exception:
+        short_ctx = ""
+
+    try:
         try:
-            plan = generate_plan(user_msg)
+            plan: Dict[str, Any] = generate_plan(user_msg, recent_ctx=short_ctx)
         except Exception:
-            return APOLOGY_MSG
+            plan = {"risk": {"level": "low"}}  # minimal placeholder
 
         try:
             risk = safety.assess(plan, user_msg)
@@ -39,15 +46,41 @@ def run_once(user_msg: str) -> str:
 
         if risk == "high":
             try:
-                return safety.escalation_message(user_msg)
+                assistant_text = safety.escalation_message(user_msg)
             except Exception:
-                return APOLOGY_MSG
+                assistant_text = APOLOGY_MSG
+        elif safety.requires_professional_for_dbt(plan):
+            try:
+                assistant_text = safety.refer_to_professional(user_msg)
+            except Exception:
+                assistant_text = APOLOGY_MSG
+        else:
+            try:
+                assistant_text = generate_response(plan, user_msg, short_ctx=short_ctx)
+            except Exception:
+                assistant_text = APOLOGY_MSG
 
+        # Persist turns
         try:
-            return generate_response(plan, user_msg)
+            memory.append_session(session_id, "user", user_msg)
         except Exception:
-            return APOLOGY_MSG
+            pass
+        try:
+            memory.append_session(
+                session_id,
+                "assistant",
+                assistant_text,
+                meta={"plan": memory.plan_summary(plan)},
+            )
+        except Exception:
+            pass
+        return assistant_text
     except Exception:
+        # Attempt to store user even on catastrophic failure
+        try:
+            memory.append_session(session_id, "user", user_msg)
+        except Exception:
+            pass
         return APOLOGY_MSG
 
 

@@ -1,5 +1,5 @@
-"""Safety Gate v1 (Stage 4)
-Minimal high-risk detection & escalation messaging.
+"""Safety Gate (Stage 6)
+High-risk detection + DBT referral trigger.
 """
 from __future__ import annotations
 
@@ -44,4 +44,31 @@ def escalation_message(user_msg: str) -> str:
     )
 
 
-__all__ = ["assess", "escalation_message", "contains_high_risk", "HIGH_RISK_KEYWORDS"]
+def requires_professional_for_dbt(plan: dict) -> bool:
+    try:
+        for item in (plan.get("plan") or []):
+            if isinstance(item, dict) and item.get("therapy") == "DBT":
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def refer_to_professional(user_msg: str) -> str:
+    return (
+        "You deserve care that is attentive and specialized. "
+        "Given what you shared, connecting with a qualified mental health professional (such as a licensed therapist or physician) would be a meaningful next step. "
+        "If you are in immediate danger or feel your safety is at risk, please contact local emergency services right now. "
+        "Reaching out to a trusted person in your life can also help you feel less alone while you arrange professional support. "
+        "This system can offer general emotional support, but it cannot replace in-person professional or emergency care."
+    )
+
+
+__all__ = [
+    "assess",
+    "escalation_message",
+    "contains_high_risk",
+    "HIGH_RISK_KEYWORDS",
+    "requires_professional_for_dbt",
+    "refer_to_professional",
+]

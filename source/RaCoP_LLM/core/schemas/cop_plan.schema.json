@@ -8,21 +8,43 @@
       "required": ["level"],
       "properties": {
         "level": { "enum": ["low", "med", "high"] },
-        "signals": { "type": "array", "items": { "type": "string" } }
+        "signals": {
+          "oneOf": [
+            { "type": "array", "items": { "type": "string" } },
+            { "type": "string" }
+          ]
+        }
       }
     },
-    "emotions": { "type": "array", "items": { "type": "string" } },
+    "emotions": {
+      "oneOf": [
+        { "type": "array", "items": { "type": "string" } },
+        {
+          "type": "object",
+          "properties": {
+            "primary": { "type": "string" },
+            "secondary": { "type": "string" },
+            "summary": { "type": "string" }
+          }
+        }
+      ]
+    },
     "distortions": { "type": "array", "items": { "type": "string" } },
     "plan": {
       "type": "array",
       "items": {
-        "type": "object",
-        "required": ["therapy", "weight"],
-        "properties": {
-          "therapy": { "enum": ["PCT", "CBT", "SFBT", "DBT"] },
-          "goal": { "type": "string" },
-          "weight": { "type": "number", "minimum": 0, "maximum": 1 }
-        }
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["therapy"],
+            "properties": {
+              "therapy": { "enum": ["PCT", "CBT", "SFBT", "DBT"] },
+              "goal": { "type": "string" },
+              "weight": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          },
+          { "enum": ["PCT", "CBT", "SFBT", "DBT"] }
+        ]
       }
     },
     "tone": { "type": "string" },
@@ -30,6 +52,11 @@
     "template_slots": { "type": "object" },
     "retrieval_queries": { "type": "array", "items": { "type": "string" } },
     "final_prompt": { "type": "string" },
-    "notes": { "type": "string" }
-  }
+    "notes": { "type": "string" },
+    "pct": { "type": "object" },
+    "cbt": { "type": "object" },
+    "sfbt": { "type": "object" },
+    "dbt": { "type": "object" }
+  },
+  "additionalProperties": true
 }
