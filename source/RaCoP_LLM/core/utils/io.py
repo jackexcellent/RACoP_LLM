@@ -16,6 +16,8 @@ def _detect_base_dir() -> Path:
 
 BASE_DIR: Path = _detect_base_dir()
 SESS_DIR: Path = BASE_DIR / "runs" / "sessions"
+KB_DIR: Path = BASE_DIR / "data" / "kb"
+EMB_DIR: Path = BASE_DIR / "data" / "embeddings"
 
 
 def ensure_dir(p: Union[str, Path]) -> None:
@@ -52,10 +54,14 @@ def read_jsonl(path: Path) -> List[Dict[str, Any]]:
 
 # Ensure base directories at import
 ensure_dir(SESS_DIR)
+ensure_dir(KB_DIR)
+ensure_dir(EMB_DIR)
 
 __all__ = [
     "BASE_DIR",
     "SESS_DIR",
+    "KB_DIR",
+    "EMB_DIR",
     "ensure_dir",
     "session_path",
     "append_jsonl",

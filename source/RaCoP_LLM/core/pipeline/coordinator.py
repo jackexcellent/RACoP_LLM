@@ -44,6 +44,10 @@ def run_once(user_msg: str, session_id: str = "default") -> str:
         except Exception:
             risk = "low"
 
+        import os
+        rag_enabled = os.getenv("RAG_ENABLED", "1") != "0"
+        kb_snippets = []
+
         if risk == "high":
             try:
                 assistant_text = safety.escalation_message(user_msg)
@@ -56,7 +60,22 @@ def run_once(user_msg: str, session_id: str = "default") -> str:
                 assistant_text = APOLOGY_MSG
         else:
             try:
-                assistant_text = generate_response(plan, user_msg, short_ctx=short_ctx)
+                if rag_enabled:
+                    try:
+                        # Lazy import to avoid cost when disabled
+                        from core.pipeline import retriever  # type: ignore
+                        retriever.ensure_index()
+                        queries = plan.get("retrieval_queries") or []
+                        if isinstance(queries, list) and queries:
+                            kb_snippets = retriever.search(queries, top_k=5)
+                    except Exception:
+                        kb_snippets = []
+                assistant_text = generate_response(
+                    plan,
+                    user_msg,
+                    short_ctx=short_ctx,
+                    kb_snippets=kb_snippets,
+                )
             except Exception:
                 assistant_text = APOLOGY_MSG
 

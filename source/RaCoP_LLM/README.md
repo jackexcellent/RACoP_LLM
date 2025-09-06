@@ -200,7 +200,48 @@ assistant: ...
 
 ---
 
-Stage 6 完成：短期記憶 + LLM Planner + Schema 驗證 + Safety Gate v1 + 多療法 (PCT/CBT/SFBT) + DBT 專業轉介 + 多模板 LLM Responder + 多層 fallback。後續可擴展：
+Stage 6 完成：短期記憶 + LLM Planner + Schema 驗證 + Safety Gate v1 + 多療法 (PCT/CBT/SFBT) + DBT 專業轉介 + 多模板 LLM Responder + 多層 fallback。
+
+## Stage 7 (RAG 檢索試驗版)
+
+新增 TF-IDF 檢索 (`core/pipeline/retriever.py`)：
+
+- KB 來源：`data/kb/*.txt`（預設三份：pct_reflection / cbt_reframing / sfbt_scaling）
+- 首次執行或索引檔缺失時自動建立：`data/embeddings/tfidf_index.pkl`
+- 向量化：TfidfVectorizer(ngram_range=(1,2), max_df=0.9, min_df=1, stop_words="english")
+- Planner 可輸出 `retrieval_queries` (list[str])；Coordinator 在非 high risk、非 DBT 分支且 `RAG_ENABLED != 0` 時呼叫 search 取前 5 條 snippet
+- Responder 以 `<kb_snippets> ... </kb_snippets>` 內嵌檢索片段，模型被指示「可吸收精華、不可逐字引用、不產生列表」
+
+環境變數：
+
+- `RAG_ENABLED=0` → 關閉檢索流程（不載入索引、不搜尋、不傳 kb_snippets）
+- 其他值（預設未設）→ 啟用 RAG
+
+更新檔案：
+
+- `core/pipeline/coordinator.py`：整合 RAG 開關與 kb_snippets 注入
+- `core/pipeline/responder.py`：新增 `kb_snippets` 參數與 prompt block
+- `core/pipeline/retriever.py`：索引與檢索實作
+- `core/utils/io.py`：新增 `KB_DIR`、`EMB_DIR`
+- `requirements.txt`：加入 `scikit-learn`
+- `data/kb/`：三份示例知識檔
+- `core/prompts/system_resp.txt`：加入 CONTEXT 區段（kb_snippets 使用規則）
+
+維護 / 替換 KB：
+
+1. 將自訂 .txt 放入 `data/kb/`
+2. 刪除 `data/embeddings/tfidf_index.pkl`
+3. 再次執行程式會自動重建索引
+
+限制：
+
+- 僅簡單 TF-IDF；無向量語義查詢
+- 無增量更新（需刪索引重建）
+- snippet 為字串拼接（無高亮與排名解釋）
+
+後續可擴展：BM25 / embedding 模型、段落切片、得分加權注入、檢索品質評估。
+
+後續可擴展：
 
 - 長期記憶 / 檢索式上下文
 - 風險等級細緻化 (low/med/high) 與地區化資源建議

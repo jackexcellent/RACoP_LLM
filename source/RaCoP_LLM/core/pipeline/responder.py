@@ -120,9 +120,17 @@ def _rule_based_fallback(plan: Dict[str, Any], user_msg: str) -> str:
     return " ".join(s.strip() for s in sentences if s).strip()
 
 
-def generate_response(plan: Dict[str, Any], user_msg: str, short_ctx: Optional[str] = None) -> str:
+def generate_response(
+    plan: Dict[str, Any],
+    user_msg: str,
+    short_ctx: Optional[str] = None,
+    kb_snippets: Optional[List[str]] = None,
+) -> str:
     system_prompt = load_text(SYSTEM_RESP_PATH)
     user_prompt = _assemble_multi_prompt(plan, user_msg)
+    if kb_snippets:
+        block = "\n---\n".join(kb_snippets)
+        user_prompt += f"\n\n<kb_snippets>\n{block}\n</kb_snippets>\n\nInstructions: You MAY paraphrase only helpful ideas above. Do NOT quote verbatim, do NOT list bullets, keep one compact paragraph."
     if short_ctx:
         user_prompt += f"\n\nRecent context:\n{safe_snippet(short_ctx, 120)}"
 
