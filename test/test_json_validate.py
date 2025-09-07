@@ -106,39 +106,72 @@ raw = """
     "level": "low",
     "signals": []
   },
-  "emotions": [
-    "positive"
-  ],
-  "plan": [
-    {
-      "therapy": "PCT",
-      "weight": 0.7
-    },
-    {
-      "therapy": "SFBT",
-      "weight": 0.3
-    }
-  ],
-  "tone": "warm, validating, non-judgmental",
-  "template_slots": {
-    "PCT": {
-      "starter": "It's wonderful to hear you're feeling good! Can you tell me more about what's contributing to this positive feeling?",
-      "validation": "That sounds like a really positive experience, and it's great that you're recognizing and appreciating it.",     
-      "question": "What are some things you're looking forward to?"
-    },
-    "SFBT": {
-      "scale": "On a scale of 1 to 10, where 1 is the worst you've felt and 10 is the best, where would you rate your current feeling of goodness?",
-      "one_step": "What's one small thing you could do today to maintain or even slightly improve that feeling?"
-    }
+  "emotions": {
+    "primary": "hopelessness",
+    "secondary": "sadness",
+    "tertiary": "frustration"
   },
-  "retrieval_queries": [
-    "benefits of positive emotions",
-    "activities that promote well-being"
+  "plan": [
+    "PCT",
+    "CBT",
+    "SFBT"
   ],
-  "final_prompt": "Continue exploring the positive feelings and identify small steps to maintain them.",
-  "notes": "Focus on amplifying the positive feelings and identifying resources."
+  "pct": {
+    "starter": "It sounds incredibly painful to feel constantly judged and treated meanly by your father. That's a really tough situation to be in.",
+    "validation": "It makes perfect sense that you'd feel hopeless when faced with that kind of negativity regularly. Your feelings are valid and understandable.",
+    "question": "What is one specific interaction with your father that stands out in your mind right now?"
+  },
+  "cbt": {
+    "thought": "My father's behavior means I am unlovable and incapable.",
+    "evidence_for": "He is consistently mean to me.",
+    "evidence_against": "His behavior could be related to his own issues and doesn't reflect my worth. Other people in my life show me love and support.",
+    "alt_thought": "My father's behavior is a reflection of his own struggles, and it doesn't define my worth as a person. I am worthy of love and respect."
+  },
+  "sfbt": {
+    "scale": "On a scale of 0 to 10, where 0 is feeling completely hopeless and 10 is feeling completely capable of facing your father, where would you rate yourself right now?",
+    "one_step": "Identify one small thing you can do in the next 24-48 hours to create a little bit ofy worth as a person. I am worthy of love and respect."
+  },
+  "sfbt": {
+    "scale": "On a scale of 0 to 10, where 0 is feeling completely hopeless and 10 is feeling completely capable of facing your father, where would you rate yourself right now?",
+    "one_step": "Identify one small thing you can do in the next 24-48 hours to create a little bit of  },
+  "sfbt": {
+    "scale": "On a scale of 0 to 10, where 0 is feeling completely hopeless and 10 is feeling completely capable of facing your father, where would you rate yourself right now?",
+    "one_step": "Identify one small thing you can do in the next 24-48 hours to create a little bit of  "sfbt": {
+    "scale": "On a scale of 0 to 10, where 0 is feeling completely hopeless and 10 is feeling completely capable of facing your father, where would you rate yourself right now?",
+    "one_step": "Identify one small thing you can do in the next 24-48 hours to create a little bit of    "scale": "On a scale of 0 to 10, where 0 is feeling completely hopeless and 10 is feeling completely capable of facing your father, where would you rate yourself right now?",
+    "one_step": "Identify one small thing you can do in the next 24-48 hours to create a little bit ofly capable of facing your father, where would you rate yourself right now?",
+    "one_step": "Identify one small thing you can do in the next 24-48 hours to create a little bit of distance or self-care after an interaction with your father, like taking a short walk or listening to a favorite song."
+    "one_step": "Identify one small thing you can do in the next 24-48 hours to create a little bit of distance or self-care after an interaction with your father, like taking a short walk or listening to a favorite song."
+  },
+ distance or self-care after an interaction with your father, like taking a short walk or listening to a favorite song."
+  },
+ a favorite song."
+  },
+  "dbt": {
+    "skill_name": null,
+  },
+  "dbt": {
+    "skill_name": null,
+  "dbt": {
+    "skill_name": null,
+    "steps": []
+  },
+    "skill_name": null,
+    "steps": []
+  },
+    "steps": []
+  },
+  },
+  "tone": "warm, validating, non-judgmental",
+  "weights": {
+    "PCT": 0.5,
+    "CBT": 0.3,
+    "SFBT": 0.2,
+    "DBT": 0.0
+  }
 }
-```"""
+```
+"""
 
 parsed = _parse_and_validate(raw, schema)
 print("Parsed result:", parsed)
