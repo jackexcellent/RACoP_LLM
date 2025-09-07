@@ -1,6 +1,6 @@
-"""Responder 模組 (Stage 6)
-LLM-B (Gemini) 生成多療法回覆 (PCT / CBT / SFBT)。
-若金鑰或模型失敗 → 規則式 fallback (僅 PCT 三句)。
+"""Responder 模組 (Stage 8)
+LLM-B (Gemini) 生成多療法回覆 (PCT / CBT / SFBT) + 個人化 (profile) + 可選 RAG snippets。
+若金鑰或模型失敗 → 規則式 fallback (僅 PCT 三句)；會尊重 profile 的 ineffective_skills 排除。
 DBT 由 Safety 層轉介，不在此輸出技巧。
 """
 from __future__ import annotations
@@ -65,7 +65,7 @@ def _fill_template(tmpl: str, mapping: Dict[str, str]) -> str:
     return out
 
 
-def _assemble_multi_prompt(plan: Dict[str, Any], user_msg: str) -> str:
+def _assemble_multi_prompt(plan: Dict[str, Any], user_msg: str, profile: Optional[Dict[str, Any]] = None) -> str:
     snippet = safe_snippet(user_msg, 80) or "this"
     pct_slots = {**PCT_FALLBACK, **_gather_slots(plan, "pct")}
     pct_map = {
@@ -87,7 +87,11 @@ def _assemble_multi_prompt(plan: Dict[str, Any], user_msg: str) -> str:
     except Exception:
         pass
 
-    if "CBT" in sequence:
+    ineffective = set()
+    if profile and isinstance(profile.get("ineffective_skills"), list):
+        ineffective = {s for s in profile["ineffective_skills"] if isinstance(s, str)}
+
+    if "CBT" in sequence and "CBT" not in ineffective:
         cbt_slots = {**CBT_FALLBACK, **_gather_slots(plan, "cbt")}
         cbt_map = {k: cbt_slots.get(k, CBT_FALLBACK[k]) for k in CBT_FALLBACK}
         cbt_tmpl = load_text(TEMPLATE_CBT_PATH) or (
@@ -96,7 +100,7 @@ def _assemble_multi_prompt(plan: Dict[str, Any], user_msg: str) -> str:
         )
         parts.append(_fill_template(cbt_tmpl, cbt_map).strip())
 
-    if "SFBT" in sequence:
+    if "SFBT" in sequence and "SFBT" not in ineffective:
         sfbt_slots = {**SFBT_FALLBACK, **_gather_slots(plan, "sfbt")}
         sfbt_map = {k: sfbt_slots.get(k, SFBT_FALLBACK[k]) for k in SFBT_FALLBACK}
         sfbt_tmpl = load_text(TEMPLATE_SFBT_PATH) or (
@@ -125,14 +129,30 @@ def generate_response(
     user_msg: str,
     short_ctx: Optional[str] = None,
     kb_snippets: Optional[List[str]] = None,
+    profile: Optional[Dict[str, Any]] = None,
 ) -> str:
     system_prompt = load_text(SYSTEM_RESP_PATH)
-    user_prompt = _assemble_multi_prompt(plan, user_msg)
+    user_prompt = _assemble_multi_prompt(plan, user_msg, profile=profile)
     if kb_snippets:
         block = "\n---\n".join(kb_snippets)
         user_prompt += f"\n\n<kb_snippets>\n{block}\n</kb_snippets>\n\nInstructions: You MAY paraphrase only helpful ideas above. Do NOT quote verbatim, do NOT list bullets, keep one compact paragraph."
     if short_ctx:
         user_prompt += f"\n\nRecent context:\n{safe_snippet(short_ctx, 120)}"
+    if profile:
+        try:
+            eff = profile.get("effective_skills") or []
+            ineff = profile.get("ineffective_skills") or []
+            tone_pref = profile.get("tone_preference", "warm")
+            prof_summary = [f"tone_preference={tone_pref}"]
+            if eff:
+                prof_summary.append("effective=" + ", ".join([str(x) for x in eff][:8]))
+            if ineff:
+                prof_summary.append("ineffective=" + ", ".join([str(x) for x in ineff][:8]))
+            user_prompt += "\n\n<profile>\n" + " | ".join(prof_summary) + "\nGuidance: prefer effective, avoid ineffective.\n</profile>"
+            if eff and not any((p.get("therapy") == "SFBT") for p in (plan.get("plan") or []) if isinstance(p, dict)):
+                user_prompt += "\nOptional gentle reminder: reference one previously helpful tiny step if naturally fitting."
+        except Exception:
+            pass
 
     client = GeminiClient()
     # model parameters (Stage 3 spec): gemini-2.0-flash, temp=0.7, max_tokens ~512

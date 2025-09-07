@@ -18,6 +18,7 @@ BASE_DIR: Path = _detect_base_dir()
 SESS_DIR: Path = BASE_DIR / "runs" / "sessions"
 KB_DIR: Path = BASE_DIR / "data" / "kb"
 EMB_DIR: Path = BASE_DIR / "data" / "embeddings"
+PROFILES_DIR: Path = BASE_DIR / "runs" / "profiles"
 
 
 def ensure_dir(p: Union[str, Path]) -> None:
@@ -56,6 +57,21 @@ def read_jsonl(path: Path) -> List[Dict[str, Any]]:
 ensure_dir(SESS_DIR)
 ensure_dir(KB_DIR)
 ensure_dir(EMB_DIR)
+ensure_dir(PROFILES_DIR)
+
+def read_json(path: Path, default: dict | None = None) -> dict:
+    if not path.exists():
+        return {} if default is None else default
+    try:
+        import json
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {} if default is None else default
+
+def write_json(path: Path, obj: dict) -> None:
+    ensure_dir(path.parent)
+    import json
+    path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
 
 __all__ = [
     "BASE_DIR",
@@ -66,4 +82,7 @@ __all__ = [
     "session_path",
     "append_jsonl",
     "read_jsonl",
+    "PROFILES_DIR",
+    "read_json",
+    "write_json",
 ]

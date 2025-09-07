@@ -243,6 +243,44 @@ Stage 6 完成：短期記憶 + LLM Planner + Schema 驗證 + Safety Gate v1 + �
 
 後續可擴展：
 
+## Stage 8 (Profiles & Personalization)
+
+長期個人化 Profile：`runs/profiles/<session_id>.json`，格式：
+
+```
+{
+	"effective_skills": ["PCT", "some tiny step"],
+	"ineffective_skills": ["CBT"],
+	"tone_preference": "warm"   # 可改為 neutral / direct
+}
+```
+
+更新規則（於新一輪 user 輸入前觸發）：
+
+1. 讀取上一輪 assistant 的 `meta.plan.therapies` 與 `meta.plan.suggested_action`
+2. 若當前使用者輸入含正向關鍵詞（例如："有幫助", "helped", "useful", "有效"）→ 將那些 therapies / action 加入 `effective_skills`
+3. 若含負向關鍵詞（例如："沒幫助", "didn't help", "無效", "worse"）→ 加入 `ineffective_skills`
+4. 兩者互斥：一項標記為有效會從無效移除，反之亦然；各列表最多保留 20 項
+
+Planner 注入：將 profile 摘要附加於 recent context，規則：降低無效療法權重；優先納入曾有效策略或相容小步驟。
+
+Responder 注入：<profile> 區塊提供有效/無效提示與 tone_preference；生成時：
+
+- 避免重複無效療法模板（直接跳過）
+- 可在結尾溫和提醒一個曾有效的超小步（若本輪未包含 SFBT）
+- 語氣依 tone_preference 做輕量調整（仍需保持善意與支持）
+
+修改點：
+
+- `memory.py`: 新增 profile CRUD、feedback 解析、plan_summary 增加 suggested_action
+- `coordinator.py`: 新增 profile 更新、載入、注入 Planner、保存
+- `responder.py`: 支援 profile 排除無效療法與 <profile> 块
+- prompts（system_cop.txt / system_resp.txt）加入 Profile 指引
+
+手動調整 tone_preference：直接編輯對應 JSON 檔並儲存，下次輪次自動生效。
+
+安全：High risk 與 DBT 轉介邏輯不變；RAG 流程可同時運作；profile 僅存本地 JSON，不含敏感個資。
+
 - 長期記憶 / 檢索式上下文
 - 風險等級細緻化 (low/med/high) 與地區化資源建議
 - 動態療法權重與融合（而非段落串接）

@@ -24,6 +24,12 @@ import os
 import pickle
 from pathlib import Path
 import re
+import sys
+
+# Ensure parent directory (RaCoP_LLM root) is on sys.path so `core` package can be imported
+_PKG_ROOT = Path(__file__).resolve().parents[1]
+if str(_PKG_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PKG_ROOT))
 
 from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
 from sklearn.metrics.pairwise import cosine_similarity  # type: ignore

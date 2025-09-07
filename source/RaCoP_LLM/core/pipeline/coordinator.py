@@ -1,5 +1,5 @@
-"""Conversation coordinator (Stage 6)
-Orchestrates: Memory -> Planner -> Safety/DBT Gate -> Responder + persistence.
+"""Conversation coordinator (Stage 8)
+Orchestrates: Profile feedback update -> Memory -> Planner (with profile) -> Safety/DBT Gate -> RAG -> Responder + persistence + profile save.
 """
 from __future__ import annotations
 
@@ -17,16 +17,7 @@ APOLOGY_MSG = (
 
 
 def run_once(user_msg: str, session_id: str = "default") -> str:
-    """Run one full pipeline turn with short-term memory persistence.
-
-    1. Load short context summary (last N turns) for session.
-    2. Planner generate_plan(user_msg, recent_ctx=short_ctx)
-    3. Safety assess(plan, user_msg)
-       - If high -> escalation message
-    4. Responder generate_response(plan, user_msg, short_ctx=short_ctx)
-    5. Append user + assistant turns to JSONL with plan summary meta.
-    """
-    # Always attempt to store user message even if later steps fail.
+    """Run one pipeline turn with profile personalization + RAG (Stage 8)."""
     short_ctx = ""
     try:
         short_ctx = memory.get_short_context(session_id, turns=12)
@@ -34,10 +25,30 @@ def run_once(user_msg: str, session_id: str = "default") -> str:
         short_ctx = ""
 
     try:
+        # Update profile based on feedback words in current user message about previous reply
         try:
-            plan: Dict[str, Any] = generate_plan(user_msg, recent_ctx=short_ctx)
+            memory.update_profile_from_feedback(session_id, user_msg)
         except Exception:
-            plan = {"risk": {"level": "low"}}  # minimal placeholder
+            pass
+
+        # Load profile
+        try:
+            profile = memory.load_profile(session_id)
+        except Exception:
+            profile = {"effective_skills": [], "ineffective_skills": [], "tone_preference": "warm"}
+
+        # Planner context with profile summary
+        try:
+            profile_text = memory.profile_summary_text(profile)
+        except Exception:
+            profile_text = "tone_preference: warm"
+        planner_ctx = short_ctx + ("\n\nProfile:\n" + profile_text if short_ctx or profile_text else "")
+
+        # Generate plan
+        try:
+            plan: Dict[str, Any] = generate_plan(user_msg, recent_ctx=planner_ctx)
+        except Exception:
+            plan = {"risk": {"level": "low"}}
 
         try:
             risk = safety.assess(plan, user_msg)
@@ -46,7 +57,7 @@ def run_once(user_msg: str, session_id: str = "default") -> str:
 
         import os
         rag_enabled = os.getenv("RAG_ENABLED", "1") != "0"
-        kb_snippets = []
+        kb_snippets: list[str] = []
 
         if risk == "high":
             try:
@@ -60,12 +71,11 @@ def run_once(user_msg: str, session_id: str = "default") -> str:
                 assistant_text = APOLOGY_MSG
         else:
             try:
+                queries = plan.get("retrieval_queries") or []
                 if rag_enabled:
                     try:
-                        # Lazy import to avoid cost when disabled
                         from core.pipeline import retriever  # type: ignore
                         retriever.ensure_index()
-                        queries = plan.get("retrieval_queries") or []
                         if isinstance(queries, list) and queries:
                             kb_snippets = retriever.search(queries, top_k=5)
                     except Exception:
@@ -75,11 +85,12 @@ def run_once(user_msg: str, session_id: str = "default") -> str:
                     user_msg,
                     short_ctx=short_ctx,
                     kb_snippets=kb_snippets,
+                    profile=profile,
                 )
             except Exception:
                 assistant_text = APOLOGY_MSG
 
-        # Persist turns
+        # Persist
         try:
             memory.append_session(session_id, "user", user_msg)
         except Exception:
@@ -93,14 +104,14 @@ def run_once(user_msg: str, session_id: str = "default") -> str:
             )
         except Exception:
             pass
+        try:
+            memory.save_profile(session_id, profile)
+        except Exception:
+            pass
         return assistant_text
     except Exception:
-        # Attempt to store user even on catastrophic failure
         try:
             memory.append_session(session_id, "user", user_msg)
         except Exception:
             pass
         return APOLOGY_MSG
-
-
-__all__ = ["run_once"]
