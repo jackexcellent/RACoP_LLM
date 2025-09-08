@@ -50,16 +50,23 @@ def run_once(user_msg: str, session_id: str = "default") -> str:
         except Exception:
             plan = {"risk": {"level": "low"}}
 
+        print(f"Coordinator: generated plan = {plan}")
+        
         try:
             risk = safety.assess(plan, user_msg)
         except Exception:
             risk = "low"
+            
+        print(f"Coordinator: assessed risk={risk}")
 
-        import os
-        rag_enabled = os.getenv("RAG_ENABLED", "1") != "0"
-        kb_snippets: list[str] = []
+        # MODE ROUTING
+        mode = (plan.get("template_slots", {}) or {}).get("mode", "counsel")
+        print(f"Coordinator: mode={mode}, risk={risk}")
 
-        if risk == "high":
+        # Off-topic immediate response
+        if mode == "off_topic":
+            assistant_text = "與此程式無關，不予回應。"
+        elif risk == "high":
             try:
                 assistant_text = safety.escalation_message(user_msg)
             except Exception:
@@ -70,9 +77,14 @@ def run_once(user_msg: str, session_id: str = "default") -> str:
             except Exception:
                 assistant_text = APOLOGY_MSG
         else:
+            import os
+            rag_enabled = os.getenv("RAG_ENABLED", "1") != "0"
+            history_rag_enabled = os.getenv("HISTORY_RAG_ENABLED", "1") != "0"
+            kb_snippets: list[str] = []
+            history_snippets: list[str] = []
             try:
                 queries = plan.get("retrieval_queries") or []
-                if rag_enabled:
+                if rag_enabled and mode == "counsel":  # KB RAG only in counsel mode
                     try:
                         from core.pipeline import retriever  # type: ignore
                         retriever.ensure_index()
@@ -80,11 +92,22 @@ def run_once(user_msg: str, session_id: str = "default") -> str:
                             kb_snippets = retriever.search(queries, top_k=5)
                     except Exception:
                         kb_snippets = []
+                if history_rag_enabled and mode == "counsel":
+                    try:
+                        from core.pipeline import history_retriever  # type: ignore
+                        history_snippets = history_retriever.search_history(
+                            session_id,
+                            queries=queries,
+                            user_msg=user_msg,
+                        )
+                    except Exception:
+                        history_snippets = []
                 assistant_text = generate_response(
                     plan,
                     user_msg,
                     short_ctx=short_ctx,
                     kb_snippets=kb_snippets,
+                    history_snippets=history_snippets,
                     profile=profile,
                 )
             except Exception:

@@ -6,8 +6,7 @@ from __future__ import annotations
 from typing import List
 
 HIGH_RISK_KEYWORDS: List[str] = [
-    "自殺", "結束生命", "想死", "不想活", "殺了我", "傷害自己", "割腕", "跳樓", "服藥過量",
-    "suicide", "kill myself", "end my life", "self-harm", "hurt myself", "overdose",
+    "suicide", "kill myself", "end my life", "self-harm", "hurt myself", "overdose","dead", "want to die"
 ]
 
 
