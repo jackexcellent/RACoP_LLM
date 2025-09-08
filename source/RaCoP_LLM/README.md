@@ -285,3 +285,47 @@ Responder 注入：<profile> 區塊提供有效/無效提示與 tone_preference�
 - 風險等級細緻化 (low/med/high) 與地區化資源建議
 - 動態療法權重與融合（而非段落串接）
 - 評估 / 追蹤情緒變化的指標化摘要
+
+## Stage 9 (History RAG – 對話歷史檢索)
+
+在 KB RAG 基礎上，新增「歷史對話 RAG」：從當前 `session_id` 的 `runs/sessions/<session_id>.jsonl` 檔案中，對既往對話輪次進行 TF-IDF 檢索，擷取最相關的過往脈絡段落以協助模型延續主題與細節。
+
+### 流程概述
+
+1. 收集查詢：`user_msg` + Planner 輸出的 `retrieval_queries`
+2. 讀取整個 session JSONL，每行轉為 `"role: text"`（壓縮空白）作為文件集合
+3. 使用 TF-IDF (ngram_range=(1, HIST_RAG_NGRAM), max_df=0.9, stop_words="english") 向量化
+4. 計算 cosine similarity；過濾低於 `HIST_RAG_MIN_SIM` 的行
+5. 取相似度排名 top_k（約為 `max(8, 2*HIST_RAG_MAX)`）
+6. 依行號合併鄰近（距離 ≤ `HIST_RAG_MERGE_NEIGHBOR_RADIUS`）為段落
+7. 截取前 `HIST_RAG_MAX` 段做為歷史摘要，注入 Responder Prompt 的 `<history_snippets>` 區塊
+8. Responder 僅在 counsel 模式使用它們，並被指示自然轉述、不可逐字複製、不做清單
+
+### 環境變數
+
+| 變數                           | 預設 | 說明                                             |
+| ------------------------------ | ---- | ------------------------------------------------ |
+| HISTORY_RAG_ENABLED            | 1    | 是否啟用歷史對話檢索（0 關閉）                   |
+| HIST_RAG_MAX                   | 5    | 最多保留的歷史合併段落數                         |
+| HIST_RAG_MIN_SIM               | 0.18 | 最低相似度門檻，低於此值即丟棄                   |
+| HIST_RAG_MERGE_NEIGHBOR_RADIUS | 1    | 合併命中行的鄰近距離（行號差 ≤ radius 視為同段） |
+| HIST_RAG_NGRAM                 | 2    | TF-IDF ngram 上限 (1..N)                         |
+
+關閉範例：
+
+```
+set HISTORY_RAG_ENABLED=0  (Windows PowerShell: $env:HISTORY_RAG_ENABLED="0")
+```
+
+### 效果
+
+開啟時，多輪對話引用先前情緒/主題時能自然銜接（語意轉述），關閉時上下文延續度下降。相似度門檻越高，摘要更聚焦；`HIST_RAG_MAX` 控制最終段落數量上限。
+
+### 實作檔案
+
+- `core/pipeline/history_retriever.py`：內存 TF-IDF（不建索引檔），合併/過濾邏輯
+- `core/pipeline/coordinator.py`：在非 high risk / 非 DBT / 非 off_topic 且 counsel 模式時同時執行 KB RAG + History RAG
+- `core/pipeline/responder.py`：新增 `history_snippets`，以 `<history_snippets>` 注入 prompt
+- `core/prompts/system_resp.txt`：補充 `<history_snippets>` 使用規範
+
+兩種 RAG 皆屬「參考脈絡」，Responder 被指示只自然吸收有用要點，不逐字貼上、避免清單化。

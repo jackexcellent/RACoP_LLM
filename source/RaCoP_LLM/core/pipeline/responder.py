@@ -1,7 +1,10 @@
-"""Responder 模組 (Stage 8)
-LLM-B (Gemini) 生成多療法回覆 (PCT / CBT / SFBT) + 個人化 (profile) + 可選 RAG snippets。
-若金鑰或模型失敗 → 規則式 fallback (僅 PCT 三句)；會尊重 profile 的 ineffective_skills 排除。
-DBT 由 Safety 層轉介，不在此輸出技巧。
+"""Responder 模組 (Mode-aware)
+Modes: greet / gather / counsel (off_topic handled upstream).
+greet: 1–2 sentences (greeting + light question)
+gather: 2–3 sentences (PCT empathic line + 1–2 open questions, no advice)
+counsel: multi-therapy paragraph (PCT + optional CBT + optional SFBT) with personalization & optional RAG.
+Fallbacks per mode if LLM fails.
+DBT responses are never generated here (handled by safety referral upstream).
 """
 from __future__ import annotations
 
@@ -114,10 +117,25 @@ def _assemble_multi_prompt(plan: Dict[str, Any], user_msg: str, profile: Optiona
 
 
 def _rule_based_fallback(plan: Dict[str, Any], user_msg: str) -> str:
-    slots = _gather_slots(plan, "pct")
-    starter = slots.get("starter") or PCT_FALLBACK["starter"]
-    validation = slots.get("validation") or PCT_FALLBACK["validation"]
-    question = slots.get("question") or PCT_FALLBACK["question"]
+    mode = (plan.get("template_slots", {}) or {}).get("mode", "counsel")
+    slots = plan.get("template_slots", {}) or {}
+    if mode == "greet":
+        greeting = slots.get("greeting") or "Hey — good to connect."
+        light_q = slots.get("light_question") or "What’s on your mind today?"
+        return f"{greeting} {light_q}".strip()
+    if mode == "gather":
+        gather_qs = slots.get("gather_questions") or [
+            "What feels most present for you right now?",
+            "If you could change one tiny thing this week, what would it be?",
+        ]
+        empathic = "I’m hearing there’s something weighing on you and I’d like to understand more."  # 1 sentence
+        qs_text = " " .join(q.strip().rstrip("?") + "?" for q in gather_qs[:2])
+        return f"{empathic} {qs_text}".strip()
+    # counsel fallback (PCT minimal)
+    pct_slots = _gather_slots(plan, "pct")
+    starter = pct_slots.get("starter") or PCT_FALLBACK["starter"]
+    validation = pct_slots.get("validation") or PCT_FALLBACK["validation"]
+    question = pct_slots.get("question") or PCT_FALLBACK["question"]
     snippet = safe_snippet(user_msg, 60)
     mention = f" about \"{snippet}\"" if snippet else ""
     sentences = [f"{starter}{mention}.", validation, question]
@@ -129,40 +147,60 @@ def generate_response(
     user_msg: str,
     short_ctx: Optional[str] = None,
     kb_snippets: Optional[List[str]] = None,
+    history_snippets: Optional[List[str]] = None,
     profile: Optional[Dict[str, Any]] = None,
 ) -> str:
+    mode = (plan.get("template_slots", {}) or {}).get("mode", "counsel")
     system_prompt = load_text(SYSTEM_RESP_PATH)
-    user_prompt = _assemble_multi_prompt(plan, user_msg, profile=profile)
-    if kb_snippets:
-        block = "\n---\n".join(kb_snippets)
-        user_prompt += f"\n\n<kb_snippets>\n{block}\n</kb_snippets>\n\nInstructions: You MAY paraphrase only helpful ideas above. Do NOT quote verbatim, do NOT list bullets, keep one compact paragraph."
-    if short_ctx:
-        user_prompt += f"\n\nRecent context:\n{safe_snippet(short_ctx, 120)}"
-    if profile:
-        try:
-            eff = profile.get("effective_skills") or []
-            ineff = profile.get("ineffective_skills") or []
-            tone_pref = profile.get("tone_preference", "warm")
-            prof_summary = [f"tone_preference={tone_pref}"]
-            if eff:
-                prof_summary.append("effective=" + ", ".join([str(x) for x in eff][:8]))
-            if ineff:
-                prof_summary.append("ineffective=" + ", ".join([str(x) for x in ineff][:8]))
-            user_prompt += "\n\n<profile>\n" + " | ".join(prof_summary) + "\nGuidance: prefer effective, avoid ineffective.\n</profile>"
-            if eff and not any((p.get("therapy") == "SFBT") for p in (plan.get("plan") or []) if isinstance(p, dict)):
-                user_prompt += "\nOptional gentle reminder: reference one previously helpful tiny step if naturally fitting."
-        except Exception:
-            pass
+
+    # Build user prompt depending on mode
+    slots = plan.get("template_slots", {}) or {}
+    if mode == "greet":
+        greeting = slots.get("greeting") or "Hey — good to connect."
+        light_q = slots.get("light_question") or "What’s on your mind today?"
+        user_prompt = f"<mode:greet>\nUser snippet: {safe_snippet(user_msg,80)}\nGreeting: {greeting}\nLightQuestion: {light_q}"
+    elif mode == "gather":
+        gather_qs = slots.get("gather_questions") or [
+            "What feels most present for you right now?",
+            "If you could change one tiny thing this week, what would it be?",
+        ]
+        empathic_seed = _gather_slots(plan, "pct").get("starter") or "I’m hearing there’s something on your mind."
+        qs_join = " | ".join(gather_qs[:2])
+        user_prompt = (
+            f"<mode:gather>\nSnippet: {safe_snippet(user_msg,80)}\nEmpathic: {empathic_seed}\nQuestions: {qs_join}\nInstruction: produce 2–3 sentences: reflection + open questions only."
+        )
+    else:  # counsel
+        user_prompt = _assemble_multi_prompt(plan, user_msg, profile=profile)
+        if kb_snippets:
+            block = "\n---\n".join(kb_snippets)
+            user_prompt += f"\n\n<kb_snippets>\n{block}\n</kb_snippets>\n\nInstructions: You MAY paraphrase only helpful ideas above. Do NOT quote verbatim, do NOT list bullets, keep one compact paragraph."
+        if history_snippets:
+            hblock = "\n---\n".join(history_snippets)
+            user_prompt += (
+                f"\n\n<history_snippets>\n{hblock}\n</history_snippets>\n"
+                "Guidance: absorb only what helps current concern; paraphrase naturally; no verbatim quotes, no lists, one single paragraph (2–6 sentences)."
+            )
+        if short_ctx:
+            user_prompt += f"\n\nRecent context:\n{safe_snippet(short_ctx, 120)}"
+        if profile:
+            try:
+                eff = profile.get("effective_skills") or []
+                ineff = profile.get("ineffective_skills") or []
+                tone_pref = profile.get("tone_preference", "warm")
+                prof_summary = [f"tone_preference={tone_pref}"]
+                if eff:
+                    prof_summary.append("effective=" + ", ".join([str(x) for x in eff][:8]))
+                if ineff:
+                    prof_summary.append("ineffective=" + ", ".join([str(x) for x in ineff][:8]))
+                user_prompt += "\n\n<profile>\n" + " | ".join(prof_summary) + "\nGuidance: prefer effective, avoid ineffective.\n</profile>"
+            except Exception:
+                pass
 
     client = GeminiClient()
-    # model parameters (Stage 3 spec): gemini-2.0-flash, temp=0.7, max_tokens ~512
-    raw = client.generate(system_prompt=system_prompt, user_prompt=user_prompt, temperature=0.7, max_tokens=512)
+    raw = client.generate(system_prompt=system_prompt, user_prompt=user_prompt, temperature=0.7, max_tokens=420)
     if not raw:
         return _rule_based_fallback(plan, user_msg)
-
-    # Basic post-processing: strip & ensure no JSON remnants (not expected here)
     cleaned = raw.strip()
-    # If model accidentally returned fenced code or JSON, attempt to extract plain text lines
     if cleaned.startswith("{") and cleaned.endswith("}"):
         return _rule_based_fallback(plan, user_msg)
     cleaned = re.sub(r"```.*?```", "", cleaned, flags=re.DOTALL).strip()

@@ -37,29 +37,25 @@ def _load_schema() -> Dict[str, Any]:
 
 
 def fake_plan(user_msg: str) -> Dict[str, Any]:
-    ###
     print("Using fallback fake_plan.")
-    ###
-    
     return {
         "risk": {"level": "low", "signals": []},
-        "emotions": ["anxiety"],
-        "distortions": [],
+        "emotions": ["unsure"],
         "plan": [
-            {"therapy": "PCT", "goal": "情緒承接與驗證（先同理、先陪伴）", "weight": 1.0}
+            {"therapy": "PCT", "goal": "Initial rapport and validation", "weight": 1.0}
         ],
         "tone": "warm, validating, non-judgmental",
-        "reading_level": "B1",
         "template_slots": {
+            "mode": "greet",
+            "greeting": "Hi, glad you reached out.",
+            "light_question": "What would you like to share today?",
             "pct": {
-                "starter": "I sense the deep emotions you're experiencing",
-                "validation": "Your feelings are completely valid and worth exploring.",
-                "question": "What do you need most in this moment?",
-            }
+                "starter": "I’m here with you",
+                "validation": "It’s okay to take a moment as we start.",
+                "question": "Anything on your mind you’d like to explore?",
+            },
         },
         "retrieval_queries": [],
-        "final_prompt": "",
-        "notes": "Stage-2 fallback: PCT only.",
     }
 
 
@@ -111,6 +107,7 @@ def _coerce_for_schema(data: Dict[str, Any]) -> Dict[str, Any]:
     plan = data.get("plan")
     if isinstance(plan, list):
         new_plan = []
+        therapy_key_map = {"pct": "PCT", "cbt": "CBT", "sfbt": "SFBT", "dbt": "DBT"}
         for item in plan:
             if isinstance(item, str):
                 new_plan.append({"therapy": item, "weight": 1.0 / max(len(plan), 1)})
@@ -118,6 +115,13 @@ def _coerce_for_schema(data: Dict[str, Any]) -> Dict[str, Any]:
                 if "weight" not in item:
                     item["weight"] = 0.5
                 new_plan.append(item)
+            elif isinstance(item, dict):
+                # 支援 LLM 輸出形如 {"pct": {...}} 的結構，轉為 {"therapy": "PCT"}
+                lowered_keys = {k.lower(): k for k in item.keys() if isinstance(k, str)}
+                for lk, original_k in lowered_keys.items():
+                    if lk in therapy_key_map:
+                        new_plan.append({"therapy": therapy_key_map[lk], "weight": 1.0 / max(len(plan), 1)})
+                        break  # 一個 item 只取第一個匹配的 therapy
         if new_plan:
             data["plan"] = new_plan
 
@@ -144,6 +148,19 @@ def _coerce_for_schema(data: Dict[str, Any]) -> Dict[str, Any]:
             ts.setdefault(key, {}).update(data[key])  # layer in
     if ts:
         data["template_slots"] = ts
+
+    # tone: allow object -> convert to descriptive string
+    tone_val = data.get("tone")
+    if isinstance(tone_val, dict):
+        # e.g. {"warmth":0.6, "directness":0.4} -> "warmth=0.6, directness=0.4"
+        try:
+            parts = []
+            for k, v in tone_val.items():
+                parts.append(f"{k}={v}")
+            if parts:
+                data["tone"] = ", ".join(parts)
+        except Exception:
+            pass
     return data
 
 
