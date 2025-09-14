@@ -1,27 +1,16 @@
-"""History Conversation RAG
-TF-IDF retrieval over the current session's JSONL conversation (no persistent index).
+"""History Conversation RAG (pre-Planner)
+TF-IDF retrieval over session JSONL to produce a compact <history> block.
 
-Environment variables (with defaults):
-  HISTORY_RAG_ENABLED: "1" enables (checked in coordinator, not here)
-  HIST_RAG_MAX: max merged history segments to return (default 5)
-  HIST_RAG_MIN_SIM: cosine similarity threshold (default 0.18)
-  HIST_RAG_MERGE_NEIGHBOR_RADIUS: line distance threshold for merging hits (default 1)
-  HIST_RAG_NGRAM: ngram upper bound (default 2)
+Env defaults (read in builder):
+    CTX_MAX_SNIPPETS (6)
+    CTX_MIN_SIM (0.18)
+    CTX_DEDUP_SIM (0.85)
+    HIST_RAG_NGRAM (2)
 
 Public API:
-  search_history(session_id, queries, user_msg, **overrides) -> list[str]
-
-Implementation notes:
-  - Reads runs/sessions/<session_id>.jsonl via memory/session log format.
-  - Each line converted to a simple doc string: "role: text" (condensed whitespace).
-  - Vectorizes documents + queries using TfidfVectorizer over (1, ngram).
-  - Computes similarity for each document as max cosine over queries OR sum (here we use max for sharper selection).
-  - Filters docs below min_sim.
-  - Ranks remaining docs by similarity desc, pick top_k (default: min(8, 2*max_snippets)).
-  - Merges adjacent hit lines whose indices distance <= merge_neighbor_radius into contiguous windows.
-  - Each merged window concatenates original per-line "role: text" lines separated by space; collapses whitespace.
-  - Returns up to max_snippets merged segments.
-  - Pure in-memory; no disk writes.
+    search_history(session_id: str, query: str, top_k: int = 12) -> list[str]
+    clean_and_merge(snippets: list[str], max_snippets: int, min_sim: float, dedup_sim: float) -> list[str]
+    build_history_block(session_id: str, user_msg: str) -> str
 """
 from __future__ import annotations
 
@@ -66,51 +55,21 @@ def _read_lines(session_id: str) -> List[str]:
     return lines
 
 
-def _prepare_queries(user_msg: str, queries: Sequence[str]) -> List[str]:
-    all_q: List[str] = []
-    candidates = [user_msg or ""] + list(queries or [])
-    for q in candidates:
-        q = (q or "").strip()
-        if not q:
-            continue
-        # simple whitespace collapse
-        q = re.sub(r"\s+", " ", q)
-        if q and q.lower() not in {x.lower() for x in all_q}:
-            all_q.append(q)
-    return all_q[:12]  # sanity cap
+def _prepare_query(user_msg: str) -> str:
+    q = (user_msg or "").strip()
+    q = re.sub(r"\s+", " ", q)
+    return q
 
 
-def search_history(
-    session_id: str,
-    queries: Sequence[str] | None,
-    user_msg: str,
-    *,
-    max_snippets: int | None = None,
-    min_sim: float | None = None,
-    merge_neighbor_radius: int | None = None,
-    ngram: int | None = None,
-    top_k: int | None = None,
-) -> List[str]:
-    # Load env defaults
-    env_max = int(os.getenv("HIST_RAG_MAX", "5") or 5)
-    env_min_sim = float(os.getenv("HIST_RAG_MIN_SIM", "0.18") or 0.18)
-    env_radius = int(os.getenv("HIST_RAG_MERGE_NEIGHBOR_RADIUS", "1") or 1)
-    env_ngram = int(os.getenv("HIST_RAG_NGRAM", "2") or 2)
-
-    max_snippets = max_snippets if max_snippets is not None else env_max
-    min_sim = min_sim if min_sim is not None else env_min_sim
-    merge_neighbor_radius = (
-        merge_neighbor_radius if merge_neighbor_radius is not None else env_radius
-    )
-    ngram = ngram if ngram is not None else env_ngram
-    top_k = top_k if top_k is not None else max(8, max_snippets * 2)
-
+def search_history(session_id: str, query: str, top_k: int = 12) -> List[str]:
     docs = _read_lines(session_id)
-    if not docs or not user_msg.strip():
+    query = _prepare_query(query)
+    if not docs or not query:
         return []
-    q_list = _prepare_queries(user_msg, queries or [])
-    if not q_list:
-        return []
+    try:
+        ngram = int(os.getenv("HIST_RAG_NGRAM", "2") or 2)
+    except Exception:
+        ngram = 2
 
     try:
         vectorizer = TfidfVectorizer(
@@ -120,54 +79,76 @@ def search_history(
             stop_words="english",
         )
         doc_matrix = vectorizer.fit_transform(docs)
-        query_matrix = vectorizer.transform(q_list)
-        # cosine similarities: for each doc take max over queries for selectivity
-        sims = cosine_similarity(doc_matrix, query_matrix)  # shape (D, Q)
+        query_vec = vectorizer.transform([query])
+        sims = cosine_similarity(doc_matrix, query_vec)[:, 0]
     except Exception:
         return []
 
-    import numpy as np  # local import
-    max_sims = sims.max(axis=1) if sims.size else np.array([])
-    if max_sims.size == 0:
+    import numpy as np
+    order = np.argsort(sims)[::-1]
+    results: List[str] = []
+    for i in order[: max(1, top_k)]:
+        s = docs[int(i)]
+        if s and float(sims[int(i)]) > 0:
+            results.append(s)
+    return results
+
+
+def _cosine_sim_sentences(a: str, b: str) -> float:
+    try:
+        vec = TfidfVectorizer(ngram_range=(1, 2), stop_words="english")
+        X = vec.fit_transform([a, b])
+        sim = cosine_similarity(X[0], X[1])[0][0]
+        return float(sim)
+    except Exception:
+        return 0.0
+
+
+def clean_and_merge(snippets: List[str], max_snippets: int, min_sim: float, dedup_sim: float) -> List[str]:
+    # Normalize
+    cleaned = []
+    for s in snippets:
+        t = re.sub(r"\s+", " ", (s or "").strip())
+        if len(t) >= 8:
+            cleaned.append(t)
+    if not cleaned:
         return []
 
-    # Collect candidate indices meeting threshold
-    candidate_indices = [i for i, s in enumerate(max_sims) if s >= min_sim]
-    if not candidate_indices:
-        return []
+    # Dedup by similarity/hash
+    unique: List[str] = []
+    for s in cleaned:
+        dup = False
+        for u in unique:
+            if _cosine_sim_sentences(s, u) >= dedup_sim:
+                dup = True
+                break
+        if not dup:
+            unique.append(s)
 
-    # Rank by similarity descending
-    ranked = sorted(candidate_indices, key=lambda i: float(max_sims[i]), reverse=True)
-    ranked = ranked[:top_k]
-
-    # Merge neighbors based on line distance
-    ranked_sorted = sorted(ranked)
-    windows = []  # list of (start, end)
-    cur_start = cur_end = None
-    for idx in ranked_sorted:
-        if cur_start is None:
-            cur_start = cur_end = idx
-            continue
-        if idx - cur_end <= merge_neighbor_radius:
-            cur_end = idx
-        else:
-            windows.append((cur_start, cur_end))
-            cur_start = cur_end = idx
-    if cur_start is not None:
-        windows.append((cur_start, cur_end))
-
-    # Construct merged segments
-    segments: List[str] = []
-    for (s, e) in windows:
-        merged_lines = docs[s : e + 1]
-        merged_text = " ".join(merged_lines)
-        merged_text = re.sub(r"\s+", " ", merged_text).strip()
-        if merged_text:
-            segments.append(merged_text)
-        if len(segments) >= max_snippets:
-            break
-
-    return segments[:max_snippets]
+    # Truncate to max
+    return unique[: max(1, max_snippets)]
 
 
-__all__ = ["search_history"]
+def build_history_block(session_id: str, user_msg: str) -> str:
+    try:
+        max_snips = int(os.getenv("CTX_MAX_SNIPPETS", "6") or 6)
+    except Exception:
+        max_snips = 6
+    try:
+        min_sim = float(os.getenv("CTX_MIN_SIM", "0.18") or 0.18)
+    except Exception:
+        min_sim = 0.18
+    try:
+        dedup_sim = float(os.getenv("CTX_DEDUP_SIM", "0.85") or 0.85)
+    except Exception:
+        dedup_sim = 0.85
+
+    raw = search_history(session_id, user_msg, top_k=max_snips * 2)
+    merged = clean_and_merge(raw, max_snippets=max_snips, min_sim=min_sim, dedup_sim=dedup_sim)
+    if not merged:
+        return ""
+    body = "\n---\n".join(merged)
+    return f"<history>\n{body}\n</history>"
+
+
+__all__ = ["search_history", "clean_and_merge", "build_history_block"]

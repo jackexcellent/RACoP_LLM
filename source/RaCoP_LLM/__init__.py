@@ -1,5 +1,5 @@
 """RaCoP_LLM package root.
-Provides core pipeline modules (planner, responder, memory, etc.)."""
+Planner-only architecture: exposes core pipeline modules (planner, memory, safety, retriever)."""
 
 __all__ = [
     'core'

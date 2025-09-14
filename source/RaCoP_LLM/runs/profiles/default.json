@@ -1,5 +1,7 @@
 {
-  "effective_skills": [],
+  "effective_skills": [
+    "PCT"
+  ],
   "ineffective_skills": [],
   "tone_preference": "warm"
 }

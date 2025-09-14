@@ -1,331 +1,57 @@
-# RaCoP 心理支持聊天機器人 (Stage 6)
+# RaCoP 心理支持聊天機器人（Planner-only）
 
-本階段：在 Stage 5（短期記憶 + Safety Gate v1）基礎上，升級為「多療法策略 (Multi‑Therapy) + DBT 專業轉介 (Professional Referral)」。新流程：
+新架構：Input → (History RAG + KB RAG) → Planner(JSON) → Coordinator(路由+短回覆組裝) → Output
 
-使用者輸入 → 讀取過去 N 輪摘要 (Short Context) → Planner (OpenAI + schema + fallback) 產生多療法計畫 → Safety 風險檢測 → 若 high risk → 升級訊息；若計畫包含 DBT → 專業轉介訊息；否則進入 Responder (Gemini 多模板組合或 fallback) → 寫入 JSONL 會話檔。
+重點
 
-## 功能摘要 (Stage 6)
+- 前置 RAG：對會話歷史與 KB 做 TF‑IDF 檢索、去重合併後注入 Planner 的 recent_context。
+- 單一 LLM：Planner 僅輸出 JSON（含 mode 與 PCT/CBT/SFBT 槽位）。
+- 最終回覆：Coordinator 依 mode 與權重把槽位組成短句（最多 OUTPUT_MAX_SENTENCES 句）。
+- 風險與轉介：risk=high → 升級；含 DBT → 轉介；off_topic → 「與此程式無關，不予回應。」
 
-1. 單輪 CLI：讀一行輸入 → 生成多療法計畫 → 風險/轉介判斷 → 回覆/升級 → 寫入紀錄
-2. Planner (`generate_plan`):
-   - System prompt: `core/prompts/system_cop.txt`（已擴展為多療法 slot 指令）
-   - 使用 OpenAI: gpt-4o-mini, temperature=0.2
-   - 僅允許純 JSON；以 `core/schemas/cop_plan.schema.json` 驗證
-   - 最多 2 次重試；失敗 → `fake_plan` (單一 PCT) fallback
-   - 可能輸出 therapies（例如 PCT, CBT, SFBT, DBT）及對應 template_slots
-3. Safety / Referral：
-   - `safety.assess`：risk=high 或高風險關鍵詞 → 升級訊息 (不進入 Responder)
-   - `safety.requires_professional_for_dbt(plan)`：若計畫中出現 DBT → 回覆專業轉介訊息（不生成 DBT 具體技巧內容）
-4. Responder (`generate_response`):
-   - 使用 Gemini (gemini-2.0-flash, temp=0.7)
-   - 根據計畫 therapies 動態組合模板：
-     - 永遠包含 PCT (核心同理/反映)
-     - 若計畫含 CBT → 加入 CBT 認知重構 / 行為小步驟段落
-     - 若計畫含 SFBT → 加入解決導向（例：例外、資源、下一小步）
-     - DBT 不會在此生成（改為 referral）
-   - 若 LLM 失敗或無金鑰 → 規則式 PCT 簡化 fallback
-5. `.env` 讀取：
-   - `OPENAI_API_KEY` (Planner) 缺失 → 使用 `fake_plan`
-   - `GOOGLE_API_KEY` (Responder) 缺失 → 規則式 fallback
-6. 記憶：讀取最近 N=12 turns 摘要作為 planner 與 responder 的短期上下文
-7. 儲存：每輪將 user / assistant 追加 JSONL（含 plan 摘要 meta）
+環境變數（預設值）
 
-### 多療法邏輯摘要
+- RAG_ENABLED="1"（KB RAG 開關）
+- HISTORY_RAG_ENABLED="1"（History RAG 開關）
+- CTX_MAX_SNIPPETS="6"、CTX_MIN_SIM="0.18"、CTX_DEDUP_SIM="0.85"、HIST_RAG_NGRAM="2"
+- OUTPUT_MAX_SENTENCES="3"、DEBUG_PLAN_JSON="0"
 
-| Therapy | 來源         | 生成方式              | 何時使用        | 備註                      |
-| ------- | ------------ | --------------------- | --------------- | ------------------------- |
-| PCT     | Planner plan | 模板 + LLM / fallback | 永遠 (基底同理) | 反映 + 驗證情緒           |
-| CBT     | Planner plan | 模板 slot → LLM       | 計畫含 CBT      | 聚焦自動思考 / 認知再框架 |
-| SFBT    | Planner plan | 模板 slot → LLM       | 計畫含 SFBT     | 資源、例外、下一個小步驟  |
-| DBT     | Planner plan | 不進入 responder      | 計畫含 DBT      | 直接給「專業轉介」訊息    |
-
-模板位置：`core/prompts/templates/` 目前包括：`pct.md`, `cbt.md`, `sfbt.md`（無 dbt.md by 設計）。
-
-## 專案結構
-
-```
-RACoP/source/RaCoP_LLM/
-├─ README.md
-├─ requirements.txt
-├─ cli/
-│  └─ main.py
-└─ core/
-	├─ pipeline/
-	│  ├─ planner.py
-	│  ├─ responder.py
-	│  ├─ coordinator.py
-	│  ├─ safety.py
-	│  └─ memory.py
-	├─ providers/
-	│  ├─ openai_client.py
-	│  └─ gemini_client.py
-	├─ prompts/
-	│  ├─ system_cop.txt
-	│  ├─ system_resp.txt
-	│  └─ templates/
-	│     ├─ pct.md
-	│     ├─ cbt.md
-	│     └─ sfbt.md
-	├─ schemas/
-	│  └─ cop_plan.schema.json
-	└─ utils/
-	   └─ io.py
-└─ runs/
-	└─ sessions/
-```
-
-## 需求與安裝
-
-- Python 3.11+
-- 套件：OpenAI SDK、python-dotenv、jsonschema、google-generativeai
-
-```
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-`requirements.txt` 內容：
-
-```
-openai>=1.0.0
-python-dotenv>=1.0.0
-jsonschema>=4.19.0
-google-generativeai>=0.7.0
-```
-
-## 設定 API Key (.env)
-
-在專案根目錄建立 `.env`：
-
-```
-OPENAI_API_KEY=sk-your-openai-key
-GOOGLE_API_KEY=your-gemini-key
-```
-
-缺 `OPENAI_API_KEY` → Planner fallback (`fake_plan`)
-缺 `GOOGLE_API_KEY` → Responder fallback (規則式三句)
-
-## 執行
-
-於 `RACoP/source/RaCoP_LLM/`：
+執行（REPL）
 
 ```
 python cli/main.py
 ```
 
-範例（有金鑰且成功）：
+輸入 exit/quit 結束。DEBUG_PLAN_JSON=1 可於 CLI 顯示當輪 Planner JSON。
+
+檔案結構（節錄）
 
 ```
-You: I feel stuck and overthinking everything about my future.
-Assistant: (LLM 回覆，2–5 句，含 PCT 反映 + 驗證 + 小步驟/開放式問題)
+RACoP/source/RaCoP_LLM/
+├─ cli/main.py                 # REPL
+├─ core/pipeline/
+│  ├─ coordinator.py           # 主流程＋路由＋短回覆組裝
+│  ├─ planner.py               # 單一 LLM（只回 JSON）
+│  ├─ history_retriever.py     # 對話歷史檢索與合併，輸出 <history> 區塊
+│  ├─ retriever.py             # KB RAG，輸出 <kb_snippets> 區塊
+│  └─ safety.py                # 風險評估、轉介訊息
+├─ core/prompts/system_plan.txt
+├─ core/schemas/cop_plan.schema.json
+└─ runs/sessions/, runs/profiles/
 ```
 
-若 LLM 失敗或無金鑰，仍會得到 PCT fallback：
-
-```
-You: I feel overwhelmed.
-Assistant: I’m here with you as you share this about "I feel overwhelmed.". It makes sense that you’d feel this way. What would be most supportive for you right now?
-```
-
-## 關鍵模組
-
-- `core/pipeline/planner.py`
-  - `generate_plan`: 呼叫 LLM + schema 驗證 + 重試 + fallback
-  - `fake_plan`: 固定 PCT-only 計畫
-- `core/providers/openai_client.py`: LLM-A (Planner) 呼叫
-- `core/providers/gemini_client.py`: LLM-B (Responder) 呼叫
-- `core/pipeline/responder.py`: `generate_response` 讀模板並呼叫 Gemini；失敗改用規則式 fallback
-
-## Safety Gate 與 DBT 專業轉介
-
-觸發高風險的條件：
-
-- Planner 產生的 `plan.risk.level == "high"`
-- 或使用者輸入文字包含下列任一關鍵詞（中英）例如："自殺", "想死", "kill myself", "end my life", "self-harm", "overdose"。
-
-高風險處理：
-
-- 不呼叫 Responder；直接回覆升級訊息 (英文 3–6 句)
-
-DBT 專業轉介：
-
-- 若 planner 計畫中包含 therapy = "DBT"，系統視為需要更具結構之技能訓練 / 情緒調節支持 → 不生成具體 DBT 技巧段落 → 直接輸出專業轉介訊息（鼓勵尋求合格治療師、醫療資源、同時保持支持語氣）。
-
-此設計目的：避免模型幻覺式產生複雜或潛在錯誤的 DBT 技巧指導，在無人工監督前以「安全轉介」替代。
-
-- 內容包含：情緒承接、安全重視、鼓勵聯絡緊急服務或可信任他人、說明此系統不替代專業急救
-- 不提供具體自傷方式或聯絡電話（此版本維持泛化）
-
-限制：v1 僅區分 high / low，未提供中度層級 (med)。未來可拓展多層級與地區化資源連結。
-
-## Sessions & Memory
-
-環境變數 `SESSION_ID` 用於指定會話；未設定時預設為 `default`。每輪互動會寫入：
-`runs/sessions/<session_id>.jsonl`，每行為一個 JSON 物件：
-
-```
-{ "ts": 1736160000, "role": "user"|"assistant", "text": "...", "meta": {"plan": {"risk": "low", "therapies": ["PCT"], "tone": "warm, validating, non-judgmental"}} }
-```
-
-短期記憶：在生成新計畫時取最近 N (預設 12) 筆 user/assistant 轉換為簡短文字：
-
-```
-user: ...
-assistant: ...
-...
-```
-
-此摘要作為 Planner 的 recent_ctx 與 Responder 的 short_ctx，以便回覆更貼近上下文。
-
-若檔案不存在會自動建立；所有寫入為追加模式，避免資料覆蓋。
-
-## Fallback 策略
-
-順序性判斷（前一條件優先生效）：
-
-1. 高風險 → 升級訊息（停止後續）
-2. 計畫含 DBT → 專業轉介訊息（停止後續）
-3. 缺 `OPENAI_API_KEY` → Planner fake_plan
-4. Planner 回傳非 JSON / schema 失敗 (>=2 次) → fake_plan
-5. 缺 `GOOGLE_API_KEY` 或 Responder LLM 失敗 → 規則式 PCT fallback
-6. 其他未預期例外 → 簡短道歉訊息
-
-## 後續規劃 (展望)
-
-- 風險/情緒抽取升級為模型鏈結
-- 多療法權重動態調整與融合策略
-- 對話記憶 (短期/長期) 與上下文維護
-- 最終提示合成 (final_prompt) 與多輪生成
-
----
-
-Stage 6 完成：短期記憶 + LLM Planner + Schema 驗證 + Safety Gate v1 + 多療法 (PCT/CBT/SFBT) + DBT 專業轉介 + 多模板 LLM Responder + 多層 fallback。
-
-## Stage 7 (RAG 檢索試驗版)
-
-新增 TF-IDF 檢索 (`core/pipeline/retriever.py`)：
-
-- KB 來源：`data/kb/*.txt`（預設三份：pct_reflection / cbt_reframing / sfbt_scaling）
-- 首次執行或索引檔缺失時自動建立：`data/embeddings/tfidf_index.pkl`
-- 向量化：TfidfVectorizer(ngram_range=(1,2), max_df=0.9, min_df=1, stop_words="english")
-- Planner 可輸出 `retrieval_queries` (list[str])；Coordinator 在非 high risk、非 DBT 分支且 `RAG_ENABLED != 0` 時呼叫 search 取前 5 條 snippet
-- Responder 以 `<kb_snippets> ... </kb_snippets>` 內嵌檢索片段，模型被指示「可吸收精華、不可逐字引用、不產生列表」
-
-環境變數：
-
-- `RAG_ENABLED=0` → 關閉檢索流程（不載入索引、不搜尋、不傳 kb_snippets）
-- 其他值（預設未設）→ 啟用 RAG
-
-更新檔案：
-
-- `core/pipeline/coordinator.py`：整合 RAG 開關與 kb_snippets 注入
-- `core/pipeline/responder.py`：新增 `kb_snippets` 參數與 prompt block
-- `core/pipeline/retriever.py`：索引與檢索實作
-- `core/utils/io.py`：新增 `KB_DIR`、`EMB_DIR`
-- `requirements.txt`：加入 `scikit-learn`
-- `data/kb/`：三份示例知識檔
-- `core/prompts/system_resp.txt`：加入 CONTEXT 區段（kb_snippets 使用規則）
-
-維護 / 替換 KB：
-
-1. 將自訂 .txt 放入 `data/kb/`
-2. 刪除 `data/embeddings/tfidf_index.pkl`
-3. 再次執行程式會自動重建索引
-
-限制：
-
-- 僅簡單 TF-IDF；無向量語義查詢
-- 無增量更新（需刪索引重建）
-- snippet 為字串拼接（無高亮與排名解釋）
-
-後續可擴展：BM25 / embedding 模型、段落切片、得分加權注入、檢索品質評估。
-
-後續可擴展：
-
-## Stage 8 (Profiles & Personalization)
-
-長期個人化 Profile：`runs/profiles/<session_id>.json`，格式：
-
-```
-{
-	"effective_skills": ["PCT", "some tiny step"],
-	"ineffective_skills": ["CBT"],
-	"tone_preference": "warm"   # 可改為 neutral / direct
-}
-```
-
-更新規則（於新一輪 user 輸入前觸發）：
-
-1. 讀取上一輪 assistant 的 `meta.plan.therapies` 與 `meta.plan.suggested_action`
-2. 若當前使用者輸入含正向關鍵詞（例如："有幫助", "helped", "useful", "有效"）→ 將那些 therapies / action 加入 `effective_skills`
-3. 若含負向關鍵詞（例如："沒幫助", "didn't help", "無效", "worse"）→ 加入 `ineffective_skills`
-4. 兩者互斥：一項標記為有效會從無效移除，反之亦然；各列表最多保留 20 項
-
-Planner 注入：將 profile 摘要附加於 recent context，規則：降低無效療法權重；優先納入曾有效策略或相容小步驟。
-
-Responder 注入：<profile> 區塊提供有效/無效提示與 tone_preference；生成時：
-
-- 避免重複無效療法模板（直接跳過）
-- 可在結尾溫和提醒一個曾有效的超小步（若本輪未包含 SFBT）
-- 語氣依 tone_preference 做輕量調整（仍需保持善意與支持）
-
-修改點：
-
-- `memory.py`: 新增 profile CRUD、feedback 解析、plan_summary 增加 suggested_action
-- `coordinator.py`: 新增 profile 更新、載入、注入 Planner、保存
-- `responder.py`: 支援 profile 排除無效療法與 <profile> 块
-- prompts（system_cop.txt / system_resp.txt）加入 Profile 指引
-
-手動調整 tone_preference：直接編輯對應 JSON 檔並儲存，下次輪次自動生效。
-
-安全：High risk 與 DBT 轉介邏輯不變；RAG 流程可同時運作；profile 僅存本地 JSON，不含敏感個資。
-
-- 長期記憶 / 檢索式上下文
-- 風險等級細緻化 (low/med/high) 與地區化資源建議
-- 動態療法權重與融合（而非段落串接）
-- 評估 / 追蹤情緒變化的指標化摘要
-
-## Stage 9 (History RAG – 對話歷史檢索)
-
-在 KB RAG 基礎上，新增「歷史對話 RAG」：從當前 `session_id` 的 `runs/sessions/<session_id>.jsonl` 檔案中，對既往對話輪次進行 TF-IDF 檢索，擷取最相關的過往脈絡段落以協助模型延續主題與細節。
-
-### 流程概述
-
-1. 收集查詢：`user_msg` + Planner 輸出的 `retrieval_queries`
-2. 讀取整個 session JSONL，每行轉為 `"role: text"`（壓縮空白）作為文件集合
-3. 使用 TF-IDF (ngram_range=(1, HIST_RAG_NGRAM), max_df=0.9, stop_words="english") 向量化
-4. 計算 cosine similarity；過濾低於 `HIST_RAG_MIN_SIM` 的行
-5. 取相似度排名 top_k（約為 `max(8, 2*HIST_RAG_MAX)`）
-6. 依行號合併鄰近（距離 ≤ `HIST_RAG_MERGE_NEIGHBOR_RADIUS`）為段落
-7. 截取前 `HIST_RAG_MAX` 段做為歷史摘要，注入 Responder Prompt 的 `<history_snippets>` 區塊
-8. Responder 僅在 counsel 模式使用它們，並被指示自然轉述、不可逐字複製、不做清單
-
-### 環境變數
-
-| 變數                           | 預設 | 說明                                             |
-| ------------------------------ | ---- | ------------------------------------------------ |
-| HISTORY_RAG_ENABLED            | 1    | 是否啟用歷史對話檢索（0 關閉）                   |
-| HIST_RAG_MAX                   | 5    | 最多保留的歷史合併段落數                         |
-| HIST_RAG_MIN_SIM               | 0.18 | 最低相似度門檻，低於此值即丟棄                   |
-| HIST_RAG_MERGE_NEIGHBOR_RADIUS | 1    | 合併命中行的鄰近距離（行號差 ≤ radius 視為同段） |
-| HIST_RAG_NGRAM                 | 2    | TF-IDF ngram 上限 (1..N)                         |
-
-關閉範例：
-
-```
-set HISTORY_RAG_ENABLED=0  (Windows PowerShell: $env:HISTORY_RAG_ENABLED="0")
-```
-
-### 效果
-
-開啟時，多輪對話引用先前情緒/主題時能自然銜接（語意轉述），關閉時上下文延續度下降。相似度門檻越高，摘要更聚焦；`HIST_RAG_MAX` 控制最終段落數量上限。
-
-### 實作檔案
-
-- `core/pipeline/history_retriever.py`：內存 TF-IDF（不建索引檔），合併/過濾邏輯
-- `core/pipeline/coordinator.py`：在非 high risk / 非 DBT / 非 off_topic 且 counsel 模式時同時執行 KB RAG + History RAG
-- `core/pipeline/responder.py`：新增 `history_snippets`，以 `<history_snippets>` 注入 prompt
-- `core/prompts/system_resp.txt`：補充 `<history_snippets>` 使用規範
-
-兩種 RAG 皆屬「參考脈絡」，Responder 被指示只自然吸收有用要點，不逐字貼上、避免清單化。
+短回覆策略
+
+- greet：greeting + light_question（1–2 句）
+- gather：PCT starter + validation + 1–2 個開放式問題（不給建議；2–3 句）
+- counsel：PCT 主幹（starter + validation + question）；
+  - 若 CBT.weight ≥ 0.4 且有 alt_thought → 附上一句替代想法
+  - 若 SFBT.weight ≥ 0.4 且有 one_step → 附上一句超小步
+  - 合併後總句數 ≤ OUTPUT_MAX_SENTENCES；超出則優先保留 PCT 與擇一（CBT 或 SFBT）
+
+品質檢查（手動驗收）
+
+- 啟動後可多輪聊天；hi/how are you → greet；「最近壓力大但說不清」→ gather；
+  明確壓力脈絡 → counsel（2–3 句）；「1+1?」→ off_topic 固定回覆。
+- 有歷史相近主題時，Planner 的計畫會更貼近過去內容；無歷史時亦能正常。
+- 觸發風險/DBT 規則時不給技巧；輸出升級或轉介訊息。

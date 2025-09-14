@@ -1,5 +1,5 @@
 """RaCoP 心理支持聊天機器人 - REPL 版本
-連續多輪：User Input -> Coordinator (Memory -> Planner -> Safety/DBT Gate -> Mode Routing -> Responder/Referral + Persistence)
+Planner-only：User Input -> Coordinator (Profile update -> Pre-RAG -> Planner(JSON) -> Routing -> Short reply + Persistence)
 執行方式：python cli/main.py
 
 輸入 exit / quit 結束。
@@ -21,6 +21,7 @@ from core.pipeline.coordinator import run_once  # type: ignore
 
 def main() -> None:
     session_id = os.getenv("SESSION_ID", "default")
+    dbg = os.getenv("DEBUG_PLAN_JSON", "0") == "1"
     while True:
         try:
             user_msg = input("You: ")
@@ -30,8 +31,19 @@ def main() -> None:
         if user_msg.strip().lower() in {"exit", "quit"}:
             print("Assistant: Bye!")
             break
-        reply = run_once(user_msg, session_id=session_id)
-        print("Assistant: " + reply)
+        result = run_once(user_msg, session_id=session_id)
+        # result can be a tuple (assistant, plan) or plain string for safety
+        if isinstance(result, tuple) and len(result) == 2:
+            assistant, plan = result
+            if dbg:
+                try:
+                    import json
+                    print(json.dumps(plan, ensure_ascii=False, indent=2))
+                except Exception:
+                    pass
+            print("Assistant: " + assistant)
+        else:
+            print("Assistant: " + str(result))
 
 
 if __name__ == "__main__":  # pragma: no cover

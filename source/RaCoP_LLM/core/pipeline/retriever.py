@@ -217,3 +217,68 @@ def search(queries: List[str], top_k: int = 5) -> List[str]:
 
 
 __all__ = ["ensure_index", "search"]
+
+
+def _simple_dedup(snippets: List[str], dedup_sim: float) -> List[str]:
+    from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
+    from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
+    cleaned = [re.sub(r"\s+", " ", (s or "").strip()) for s in snippets if s and len(s.strip()) >= 8]
+    out: List[str] = []
+    for s in cleaned:
+        is_dup = False
+        for t in out:
+            try:
+                vec = TfidfVectorizer(ngram_range=(1, 2), stop_words="english")
+                X = vec.fit_transform([s, t])
+                sim = float(cosine_similarity(X[0], X[1])[0][0])
+            except Exception:
+                sim = 0.0
+            if sim >= dedup_sim:
+                is_dup = True
+                break
+        if not is_dup:
+            out.append(s)
+    return out
+
+
+def build_kb_block(user_msg: str) -> str:
+    if os.getenv("RAG_ENABLED", "1") == "0":
+        return ""
+    ensure_index()
+    try:
+        max_snips = int(os.getenv("CTX_MAX_SNIPPETS", "6") or 6)
+    except Exception:
+        max_snips = 6
+    try:
+        min_sim = float(os.getenv("CTX_MIN_SIM", "0.18") or 0.18)
+    except Exception:
+        min_sim = 0.18
+    try:
+        dedup_sim = float(os.getenv("CTX_DEDUP_SIM", "0.85") or 0.85)
+    except Exception:
+        dedup_sim = 0.85
+
+    queries = [user_msg]
+    cands = search(queries, top_k=max_snips * 2)
+    # Filter by a weak similarity gate by rescoring with TF-IDF on candidates (self-sim)
+    filtered: List[str] = []
+    from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
+    from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
+    try:
+        vec = TfidfVectorizer(ngram_range=(1, 2), stop_words="english")
+        for s in cands:
+            X = vec.fit_transform([user_msg, s])
+            sim = float(cosine_similarity(X[0], X[1])[0][0])
+            if sim >= min_sim:
+                filtered.append(s)
+    except Exception:
+        filtered = cands
+    unique = _simple_dedup(filtered, dedup_sim)
+    unique = unique[:max_snips]
+    if not unique:
+        return ""
+    body = "\n---\n".join(unique)
+    return f"<kb_snippets>\n{body}\n</kb_snippets>"
+
+
+__all__.extend(["build_kb_block"]) 

@@ -1,7 +1,5 @@
-"""Planner 模組 (Stage 2)
-提供兩種方式：
-1. generate_plan: 呼叫 OpenAI + JSON Schema 驗證 (失敗重試與 fallback)
-2. fake_plan: 硬編 fallback 計畫 (PCT only)
+"""Planner-only module
+Generate a JSON plan only; no natural language reply here.
 """
 from __future__ import annotations
 
@@ -17,7 +15,7 @@ from core.providers.gemini_client import GeminiClient
 
 
 SCHEMA_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "schemas", "cop_plan.schema.json")
-SYSTEM_PROMPT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts", "system_cop.txt")
+SYSTEM_PROMPT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts", "system_plan.txt")
 
 
 def _load_text(path: str) -> str:
@@ -190,7 +188,7 @@ def _parse_and_validate(raw: str, schema: Dict[str, Any]) -> Optional[Dict[str, 
     return None
 
 
-def generate_plan(user_msg: str, recent_ctx: Optional[str] = None, max_retries: int = 0) -> Dict[str, Any]:
+def generate_plan(user_msg: str, recent_ctx: Optional[str] = None, max_retries: int = 2) -> Dict[str, Any]:
     system_prompt = _load_text(SYSTEM_PROMPT_PATH)
     schema = _load_schema()
     
@@ -198,6 +196,12 @@ def generate_plan(user_msg: str, recent_ctx: Optional[str] = None, max_retries: 
         return fake_plan(user_msg)
 
     ctx_part = recent_ctx or "(no recent context)"
+    print("=== RECENT CONTEXT ===")
+    print(f"{ctx_part}\n---")  # Debug log
+    
+    print("=== USER MESSAGE ===")
+    print(f"{user_msg}\n---")  # Debug log
+    
     user_prompt = json.dumps(
         {
             "user_message": user_msg,
