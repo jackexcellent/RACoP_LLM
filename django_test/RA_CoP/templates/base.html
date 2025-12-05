@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Chatbot</title>
+    <style>
+        body { font-family: Arial; background:#f4f4f4; margin:0; padding:20px; }
+        .chat-box { width:400px; margin:auto; background:white; padding:20px; border-radius:10px; box-shadow:0 0 10px #ccc; }
+        .messages { height:400px; overflow-y:auto; border:1px solid #ddd; padding:10px; }
+        .msg { margin:10px 0; }
+        .user { text-align:right; }
+        .bot { text-align:left; }
+    </style>
+</head>
+<body>
+<div class="chat-box">
+    <h2>Chatbot</h2>
+    <div class="messages" id="messages"></div>
+    <input type="text" id="input" placeholder="Type your message..." style="width:80%;">
+    <button onclick="sendMessage()">Send</button>
+</div>
+
+<script>
+function sendMessage() {
+    const input = document.getElementById("input");
+    const text = input.value.trim();
+    if (!text) return;
+
+    appendMessage("user", text);
+    input.value = "";
+
+    fetch("/chat/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": getCSRF() },
+        body: JSON.stringify({ message: text })
+    })
+    .then(res => res.json())
+    .then(data => appendMessage("bot", data.reply))
+}
+
+function appendMessage(type, text) {
+    const box = document.getElementById("messages");
+    const div = document.createElement("div");
+    div.className = "msg " + type;
+    div.textContent = text;
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+}
+
+function getCSRF() {
+    return document.cookie.split("; ")
+        .find(row => row.startsWith("csrftoken="))
+        ?.split("=")[1];
+}
+</script>
+</body>
+</html>
